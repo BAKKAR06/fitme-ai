@@ -47,9 +47,25 @@ if torch.cuda.get_device_properties(0).major >= 8:
 print("GPU:", torch.cuda.get_device_name(0))
 print("Loading FASHN VTON 1.5...")
 pipeline = TryOnPipeline(weights_dir=WEIGHTS_DIR, device="cuda")
+
+import cv2
+import numpy as np
+
+from enhance import crop_to_person, finish_result, load_upscaler
+
+upscaler = load_upscaler(WEIGHTS_DIR)
+print("Upscaler:", "Real-ESRGAN x4plus" if upscaler else "off")
 print("FASHN READY")
 
-import numpy as np
+MAX_PERSON_SIDE = 2400  # bigger phone photos are reduced to this before anything else
+
+
+def parse(rgb: np.ndarray) -> np.ndarray:
+    """FASHN human parser; always returns a label map of the input's height x width."""
+    seg = np.asarray(pipeline.hp_model.predict(np.ascontiguousarray(rgb)))
+    if seg.shape[:2] != rgb.shape[:2]:
+        seg = cv2.resize(seg.astype(np.uint8), (rgb.shape[1], rgb.shape[0]), interpolation=cv2.INTER_NEAREST)
+    return seg
 
 # Human-parser classes that mean "a person is on the garment photo".
 BODY_LABEL_IDS = [1, 2, 12, 13, 14, 15, 16]  # face, hair, arms, hands, legs, feet, torso
@@ -59,12 +75,12 @@ MODEL_PHOTO_BODY_SHARE = 0.015
 def detect_garment_photo_type(garment_rgb):
     """flat-lay = garment alone (whole image is used); model = worn by a person
     (FASHN then cuts out only the garment, so hands/faces of the model are not copied)."""
-    seg = pipeline.hp_model.predict(np.asarray(garment_rgb))
+    seg = parse(np.asarray(garment_rgb))
     share = float(np.isin(seg, BODY_LABEL_IDS).mean())
     return ("model" if share > MODEL_PHOTO_BODY_SHARE else "flat-lay"), share
 
 
-app = FastAPI(title="FitMe FASHN Local GPU", version="1.3-local")
+app = FastAPI(title="FitMe FASHN Local GPU", version="1.4-local")
 MAX_RESULTS = 30
 pipeline_lock = threading.Lock()
 jobs_lock = threading.Lock()
@@ -91,6 +107,9 @@ def health():
         "gpu": torch.cuda.get_device_name(0),
         "vram_free_gb": round(free / 2**30, 2),
         "vram_total_gb": round(total / 2**30, 2),
+        "enhance": True,
+        "upscaler": upscaler is not None,
+        "max_steps": 50,
     }
 
 
@@ -104,6 +123,7 @@ def generate_job(
     guidance_scale: float,
     seed: int,
     segmentation_free: bool,
+    enhance: bool,
 ):
     try:
         with jobs_lock:
@@ -112,6 +132,7 @@ def generate_job(
 
         person = Image.open(io.BytesIO(person_bytes))
         person = ImageOps.exif_transpose(person).convert("RGB")
+        person.thumbnail((MAX_PERSON_SIDE, MAX_PERSON_SIDE), Image.Resampling.LANCZOS)
         garment = Image.open(io.BytesIO(garment_bytes))
         garment = ImageOps.exif_transpose(garment).convert("RGB")
 
@@ -130,8 +151,16 @@ def generate_job(
 
         with pipeline_lock:
             torch.cuda.reset_peak_memory_stats()
+            box = None
+            model_input = person
+            if enhance:
+                try:
+                    model_input, box = crop_to_person(person, parse)
+                except Exception as exc:  # never fail the try-on because of the crop
+                    print(f"crop skipped: {exc}")
+                    model_input, box = person, None
             result = pipeline(
-                person_image=person,
+                person_image=model_input,
                 garment_image=garment,
                 category=mapped,
                 garment_photo_type=photo_type,
@@ -142,11 +171,26 @@ def generate_job(
                 segmentation_free=bool(segmentation_free),
             )
 
+            generated = result.images[0]
+            final, media = generated, "image/png"
+            if enhance:
+                try:
+                    final = finish_result(person, box, generated, parse, upscaler)
+                    media = "image/jpeg"
+                except Exception as exc:
+                    print(f"enhance skipped: {type(exc).__name__}: {exc}")
+
         output = io.BytesIO()
-        result.images[0].save(output, format="PNG")
+        if media == "image/jpeg":
+            final.save(output, format="JPEG", quality=94, subsampling=0)
+        else:
+            final.save(output, format="PNG")
 
         with jobs_lock:
-            RESULTS[job_id] = output.getvalue()
+            RESULTS[job_id] = (output.getvalue(), media)
+            JOBS[job_id]["enhanced"] = media == "image/jpeg"
+            JOBS[job_id]["cropped"] = box is not None
+            JOBS[job_id]["output_size"] = list(final.size)
             JOBS[job_id]["status"] = "completed"
             JOBS[job_id]["completed_at"] = time.time()
             JOBS[job_id]["seconds"] = round(time.time() - JOBS[job_id]["started_at"], 2)
@@ -172,6 +216,7 @@ async def create_job(
     guidance_scale: float = Form(1.5),
     seed: int = Form(42),
     segmentation_free: bool = Form(True),
+    enhance: bool = Form(True),
 ):
     person_bytes = await person_photo.read()
     garment_bytes = await garment_photo.read()
@@ -200,6 +245,7 @@ async def create_job(
             guidance_scale,
             seed,
             segmentation_free,
+            enhance,
         ),
         daemon=True,
         name=f"fashn-{job_id}",
@@ -225,12 +271,13 @@ def job_result(job_id: str):
             raise HTTPException(status_code=404, detail="Job not found")
         if job.get("status") != "completed":
             raise HTTPException(status_code=409, detail=job.get("status"))
-        data = RESULTS.get(job_id)
+        stored = RESULTS.get(job_id)
 
-    if not data:
+    if not stored:
         raise HTTPException(status_code=404, detail="Result not found")
 
-    return Response(content=data, media_type="image/png")
+    data, media = stored
+    return Response(content=data, media_type=media)
 
 
 # Short sync route kept only for quick manual tests.

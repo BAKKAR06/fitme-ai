@@ -159,3 +159,86 @@ def fashn_try_on(
         return space.download_image(data[0])
     finally:
         space.close()
+
+
+# --------------------------------------------------------------------------- #
+# Other free try-on models that run on Hugging Face ZeroGPU Spaces.
+# The Space APIs are the ones used by benchmark/bench_spaces.py.
+# --------------------------------------------------------------------------- #
+def _strip(fd: Any) -> Any:
+    if isinstance(fd, dict) and "path" in fd:
+        return {"path": fd["path"], "meta": {"_type": "gradio.FileData"}}
+    return fd
+
+
+def _run_fashn(s: HFSpace, person: Path, garment: Path, category: str, steps: int, seed: int, photo_type: str):
+    cat = {"upper_body": "tops", "lower_body": "bottoms", "dresses": "one-pieces"}[category]
+    return s.call("try_on", [s.upload(person), s.upload(garment), cat,
+                             "model" if photo_type == "model" else "flat-lay", steps, 1.5, seed, True])[0]
+
+
+def _run_leffa(s: HFSpace, person: Path, garment: Path, category: str, steps: int, seed: int, photo_type: str):
+    model_type = "viton_hd" if category == "upper_body" else "dress_code"
+    return s.call("leffa_predict_vt", [s.upload(person), s.upload(garment), False, steps, 2.5, seed,
+                                       model_type, category, False])[0]
+
+
+def _run_fitdit(s: HFSpace, person: Path, garment: Path, category: str, steps: int, seed: int, photo_type: str):
+    cat = {"upper_body": "Upper-body", "lower_body": "Lower-body", "dresses": "Dresses"}[category]
+    p = s.upload(person)
+    mask = s.call("generate_mask", [p, cat, 0, 0, 0, 0])
+    editor = mask[0]
+    pre_mask = {
+        "background": _strip(editor.get("background")),
+        "layers": [_strip(x) for x in editor.get("layers") or []],
+        "composite": _strip(editor.get("composite")),
+        "id": None,
+    }
+    return s.call("process", [p, s.upload(garment), pre_mask, _strip(mask[1]), min(steps, 30), 2, seed, 1,
+                              "768x1024"])[0]
+
+
+def _run_idm(s: HFSpace, person: Path, garment: Path, category: str, steps: int, seed: int, photo_type: str):
+    p = s.upload(person)
+    return s.call("tryon", [{"background": p, "layers": [], "composite": None}, s.upload(garment),
+                            "garment", True, True, min(steps, 40), seed])[0]
+
+
+def _run_ootd(s: HFSpace, person: Path, garment: Path, category: str, steps: int, seed: int, photo_type: str):
+    if category == "upper_body":
+        return s.call("process_hd", [s.upload(person), s.upload(garment), 1, min(steps, 40), 2, seed])[0]
+    cat = {"lower_body": "Lower-body", "dresses": "Dress"}[category]
+    return s.call("process_dc", [s.upload(person), s.upload(garment), cat, 1, min(steps, 40), 2, seed])[0]
+
+
+ALL_CATEGORIES = ("upper_body", "lower_body", "dresses")
+
+# id -> (Space, adapter, supported categories)
+SPACE_MODELS: dict[str, tuple[str, Any, tuple[str, ...]]] = {
+    "fashn_cloud": ("fashn-ai/fashn-vton-1.5", _run_fashn, ALL_CATEGORIES),
+    "leffa": ("franciszzj/Leffa", _run_leffa, ALL_CATEGORIES),
+    "fitdit": ("BoyuanJiang/FitDiT", _run_fitdit, ALL_CATEGORIES),
+    "idm": ("yisol/IDM-VTON", _run_idm, ("upper_body",)),
+    "ootd": ("levihsu/OOTDiffusion", _run_ootd, ALL_CATEGORIES),
+}
+
+
+def space_try_on(
+    model_id: str,
+    token: str | None,
+    person_path: Path,
+    garment_path: Path,
+    category: str,
+    steps: int = 30,
+    seed: int = 42,
+    photo_type: str = "auto",
+) -> bytes:
+    space_id, adapter, categories = SPACE_MODELS[model_id]
+    if category not in categories:
+        raise RuntimeError(f"{model_id} не поддерживает категорию {category}")
+    space = HFSpace(space_id, token)
+    try:
+        space.connect()
+        return space.download_image(adapter(space, person_path, garment_path, category, steps, seed, photo_type))
+    finally:
+        space.close()

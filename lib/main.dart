@@ -187,9 +187,12 @@ class _ServerStatusCardState extends State<ServerStatusCard> {
       try {
         final status = await FitMeApi.aiStatus();
         ai = status['online'] == true;
-        final steps = status['steps']?.toString();
+        final details = status['ai'];
+        final upscaler = details is Map && details['upscaler'] == true;
+        final gpu = details is Map ? details['gpu']?.toString() : null;
         text = ai
-            ? 'FASHN VTON 1.5 готов${steps == null ? '' : ' • $steps шагов'}'
+            ? 'FASHN VTON 1.5 готов${gpu == null ? '' : ' • $gpu'}'
+                '${upscaler ? ' • улучшение чёткости' : ''}'
             : 'Сервер есть, но GPU не отвечает';
       } catch (e) {
         ok = false;

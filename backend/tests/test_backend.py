@@ -132,3 +132,79 @@ def test_outfit_limits(client):
         files=[("person_photo", ("p.jpg", png("gray"), "image/png"))],
     )
     assert r.status_code == 422
+
+
+def jpeg(color, size=(300, 400)):
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, "JPEG")
+    return buf.getvalue()
+
+
+def test_jpeg_result_keeps_jpg_extension(client, monkeypatch):
+    import app.main as m
+
+    def fake_get(url, **kw):
+        if url.endswith("/health"):
+            return FakeResp(js={"status": "ready", "upscaler": True})
+        if url.endswith("/result"):
+            return FakeResp(content=jpeg("red"), ct="image/jpeg")
+        return FakeResp(js={"status": "completed"})
+
+    monkeypatch.setattr(m.httpx, "get", fake_get)
+    r = client.post(
+        "/api/v1/try-on/upload",
+        data={"category": "upper_body"},
+        files={"person_photo": ("p.jpg", png("gray"), "image/png"), "garment_photo": ("g.png", png("navy"), "image/png")},
+    )
+    job = wait_job(client, r.json()["job_id"])
+    assert job["status"] == "completed", job["error"]
+    assert job["result_url"].endswith(".jpg")
+    assert job["model"] == "fashn" and job["body_preprocessing"]["body_warped"] is False
+
+
+def test_models_list_and_category_check(client, monkeypatch):
+    import app.main as m
+
+    monkeypatch.setattr(m, "_space_stage", lambda space_id: (space_id != "levihsu/OOTDiffusion", "SLEEPING"))
+    data = client.get("/api/v1/models?refresh=true").json()
+    by_id = {it["id"]: it for it in data["items"]}
+    assert by_id["fashn"]["available"] is True
+    assert by_id["leffa"]["available"] is True and by_id["ootd"]["available"] is False
+    assert data["hf_token"] is False
+
+    items = [{"category": "lower_body", "upload_index": 0}]
+    r = client.post(
+        "/api/v1/try-on/outfit",
+        data={"items": json.dumps(items), "model": "idm"},
+        files=[("person_photo", ("p.jpg", png("gray"), "image/png")), ("garment_photos", ("a.png", png("black"), "image/png"))],
+    )
+    assert r.status_code == 422 and "IDM-VTON" in r.json()["detail"]
+    r = client.post(
+        "/api/v1/try-on/outfit",
+        data={"items": json.dumps(items), "model": "nope"},
+        files=[("person_photo", ("p.jpg", png("gray"), "image/png")), ("garment_photos", ("a.png", png("black"), "image/png"))],
+    )
+    assert r.status_code == 422
+
+
+def test_space_model_is_used(client, monkeypatch):
+    import app.hf_space as hf
+
+    used = []
+
+    def fake_space(model_id, token, person, garment, category, steps, seed, photo_type):
+        used.append((model_id, category, steps))
+        return png("green")
+
+    monkeypatch.setattr(hf, "space_try_on", fake_space)
+    items = [{"category": "upper_body", "upload_index": 0, "label": "Футболка"}]
+    r = client.post(
+        "/api/v1/try-on/outfit",
+        data={"items": json.dumps(items), "model": "leffa", "num_steps": "30"},
+        files=[("person_photo", ("p.jpg", png("gray"), "image/png")), ("garment_photos", ("a.png", png("black"), "image/png"))],
+    )
+    assert r.status_code == 200, r.text
+    job = wait_job(client, r.json()["job_id"])
+    assert job["status"] == "completed", job["error"]
+    assert used == [("leffa", "upper_body", 30)] and job["engine"] == "Leffa"
+    assert not [c for c in client.calls if c[0] == "POST"]  # local GPU not touched

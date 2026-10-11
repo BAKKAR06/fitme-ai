@@ -277,6 +277,66 @@ class OutfitItem {
   };
 }
 
+/// A try-on model the server can run (see GET /api/v1/models).
+class TryOnModel {
+  const TryOnModel({
+    required this.id,
+    required this.title,
+    required this.where,
+    required this.categories,
+    required this.limit,
+    required this.note,
+    required this.license,
+    required this.available,
+    this.reason,
+    this.needsToken = false,
+  });
+
+  final String id;
+  final String title;
+  final String where;
+  final List<String> categories;
+  final String limit;
+  final String note;
+  final String license;
+  final bool available;
+  final String? reason;
+  final bool needsToken;
+
+  bool get isLocal => id == 'fashn';
+
+  bool supports(String category) => categories.contains(category);
+
+  /// Used before the server answered: the laptop model.
+  static const fallback = TryOnModel(
+    id: 'fashn',
+    title: 'FASHN VTON 1.5',
+    where: 'Ноутбук (ваша видеокарта)',
+    categories: ['upper_body', 'lower_body', 'dresses'],
+    limit: 'без лимита',
+    note: 'Основная модель',
+    license: 'Apache-2.0',
+    available: true,
+  );
+
+  factory TryOnModel.fromJson(Map<String, dynamic> json) {
+    return TryOnModel(
+      id: json['id']?.toString() ?? 'fashn',
+      title: json['title']?.toString() ?? 'Модель',
+      where: json['where']?.toString() ?? '',
+      categories: (json['categories'] as List<dynamic>? ?? const [])
+          .map((e) => e.toString())
+          .toList(),
+      limit: json['limit']?.toString() ?? '',
+      note: json['note']?.toString() ?? '',
+      license: json['license']?.toString() ?? '',
+      available: json['available'] == true,
+      reason: json['reason']?.toString(),
+      needsToken: json['needs_token'] == true,
+    );
+  }
+}
+
 class FitMeApiException implements Exception {
   FitMeApiException(this.message, {this.statusCode});
 
@@ -422,6 +482,16 @@ class FitMeApi {
   }
 
   static Future<Map<String, dynamic>> health() => _json('GET', '/health');
+
+  static Future<List<TryOnModel>> models({bool refresh = false}) async {
+    final data = await _json('GET', '/api/v1/models${refresh ? '?refresh=true' : ''}');
+    final raw = data['items'] as List<dynamic>? ?? const [];
+    final list = raw
+        .whereType<Map<String, dynamic>>()
+        .map(TryOnModel.fromJson)
+        .toList();
+    return list.isEmpty ? const [TryOnModel.fallback] : list;
+  }
   static Future<Map<String, dynamic>> aiStatus() =>
       _json('GET', '/api/v1/ai/status');
 
@@ -488,6 +558,7 @@ class FitMeApi {
     required double bodyHips,
     required int numSteps,
     required int seed,
+    String model = 'fashn',
   }) {
     final files = <MapEntry<String, XFile>>[
       MapEntry('person_photo', personPhoto),
@@ -524,6 +595,7 @@ class FitMeApi {
         'body_hips': bodyHips.toStringAsFixed(1),
         'num_steps': '$numSteps',
         'seed': '$seed',
+        'model': model,
       },
       files: files,
     );

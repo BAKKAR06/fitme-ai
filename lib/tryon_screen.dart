@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'api.dart';
 import 'avatar_2d.dart';
@@ -11,8 +12,51 @@ import 'common.dart';
 
 const int kMaxOutfitItems = 3;
 
-/// Rough FASHN speed on the RTX 4060 laptop: seconds per diffusion step.
-const double kSecondsPerStep = 2.3;
+/// Rough FASHN speed on the RTX 4060 laptop: seconds per diffusion step,
+/// plus fixed work per garment (upload, pose, parsing, upscale, paste-back).
+const double kSecondsPerStep = 1.65;
+const double kSecondsPerGarment = 20;
+
+/// Quality presets: diffusion steps sent to the server.
+const kQualityPresets = <(int, String)>[(15, 'Быстро'), (30, 'Баланс'), (50, 'Максимум')];
+
+/// Keeps the photo chosen for try-on (separate from the avatar, which it must not overwrite).
+class PersonPhotoStore {
+  PersonPhotoStore._();
+
+  static const _key = 'person_path';
+
+  static Future<String?> loadPath() async {
+    final saved = SettingsStore.get<String>(_key);
+    if (saved != null && await File(saved).exists()) return saved;
+    return AvatarPhotoStore.loadPath();
+  }
+
+  static void remember(String path) => SettingsStore.set(_key, path);
+
+  /// Copies a picked photo under a new unique name, so Flutter never shows a
+  /// cached older picture, and removes the previous copy.
+  static Future<String> save(XFile image) async {
+    final dir = await getApplicationDocumentsDirectory();
+    final lower = image.name.toLowerCase();
+    final ext = lower.endsWith('.png') ? '.png' : '.jpg';
+    final path = '${dir.path}${Platform.pathSeparator}'
+        'tryon_person_${DateTime.now().millisecondsSinceEpoch}$ext';
+    await image.saveTo(path);
+    try {
+      await for (final entity in dir.list()) {
+        final name = entity.uri.pathSegments.last;
+        if (entity is File && name.startsWith('tryon_person_') && entity.path != path) {
+          await entity.delete();
+        }
+      }
+    } catch (_) {
+      // Old copies are only a few MB; never fail the pick because of cleanup.
+    }
+    remember(path);
+    return path;
+  }
+}
 
 class TryOnScreen extends StatefulWidget {
   const TryOnScreen({super.key});
@@ -31,8 +75,13 @@ class TryOnScreenState extends State<TryOnScreen> {
   String size = 'M';
   String fit = 'Regular';
   String color = 'Как на фото';
-  int quality = 20;
+  int quality = SettingsStore.get<int>('quality') ?? 30;
   int seed = 42;
+  bool pickingPerson = false;
+
+  List<TryOnModel> models = const [TryOnModel.fallback];
+  String modelId = SettingsStore.get<String>('model') ?? 'fashn';
+  bool modelsLoading = false;
 
   bool busy = false;
   String status = 'idle';
@@ -52,7 +101,27 @@ class TryOnScreenState extends State<TryOnScreen> {
   @override
   void initState() {
     super.initState();
-    _loadSavedAvatar();
+    if (!kQualityPresets.any((p) => p.$1 == quality)) quality = 30;
+    _loadPerson();
+    _loadModels();
+  }
+
+  TryOnModel get model =>
+      models.firstWhere((m) => m.id == modelId, orElse: () => models.first);
+
+  Future<void> _loadModels({bool refresh = false}) async {
+    // Also called from initState, where setState is not allowed yet.
+    modelsLoading = true;
+    if (refresh && mounted) setState(() {});
+    try {
+      final list = await FitMeApi.models(refresh: refresh);
+      if (!mounted) return;
+      setState(() => models = list);
+    } catch (_) {
+      // Keep the laptop model; the status card already explains connection problems.
+    } finally {
+      if (mounted) setState(() => modelsLoading = false);
+    }
   }
 
   @override
@@ -92,25 +161,39 @@ class TryOnScreenState extends State<TryOnScreen> {
 
   // ------------------------------------------------------------------ person
 
-  Future<void> _loadSavedAvatar() async {
-    final path = await AvatarPhotoStore.loadPath();
+  Future<void> _loadPerson() async {
+    final path = await PersonPhotoStore.loadPath();
     if (!mounted || path == null || personPhoto != null) return;
     setState(() => personPhoto = XFile(path));
   }
 
   Future<void> _pickPerson(ImageSource source) async {
-    final image = await picker.pickImage(
-      source: source,
-      imageQuality: 92,
-      maxWidth: 1800,
-    );
+    XFile? image;
+    try {
+      image = await picker.pickImage(
+        source: source,
+        imageQuality: 95,
+        maxWidth: 2200,
+        maxHeight: 2200,
+      );
+    } catch (e) {
+      if (mounted) showMessage(context, 'Не удалось открыть ${source == ImageSource.camera ? 'камеру' : 'галерею'}: $e');
+      return;
+    }
     if (image == null || !mounted) return;
-    final savedPath = await AvatarPhotoStore.saveFromXFile(image);
-    if (!mounted) return;
-    setState(() {
-      personPhoto = XFile(savedPath);
-      _resetResult();
-    });
+    setState(() => pickingPerson = true);
+    try {
+      final path = await PersonPhotoStore.save(image);
+      if (!mounted) return;
+      setState(() {
+        personPhoto = XFile(path);
+        _resetResult();
+      });
+    } catch (e) {
+      if (mounted) showMessage(context, 'Не удалось сохранить фото: $e');
+    } finally {
+      if (mounted) setState(() => pickingPerson = false);
+    }
   }
 
   Future<void> _useSavedAvatar() async {
@@ -121,7 +204,15 @@ class TryOnScreenState extends State<TryOnScreen> {
       ).push(MaterialPageRoute(builder: (_) => const Avatar2DScreen()));
       path = await AvatarPhotoStore.loadPath();
     }
-    if (!mounted || path == null) return;
+    if (!mounted) return;
+    if (path == null) {
+      showMessage(context, 'Аватар ещё не создан');
+      return;
+    }
+    // The avatar file keeps its name when re-shot: drop the old decoded picture.
+    await FileImage(File(path)).evict();
+    PersonPhotoStore.remember(path);
+    if (!mounted) return;
     setState(() {
       personPhoto = XFile(path!);
       _resetResult();
@@ -443,8 +534,12 @@ class TryOnScreenState extends State<TryOnScreen> {
     step = 0;
   }
 
-  int get _etaSeconds =>
-      (quality * kSecondsPerStep * math.max(1, outfit.length) + 6).round();
+  int get _etaSeconds {
+    final perGarment = model.isLocal
+        ? quality * kSecondsPerStep + kSecondsPerGarment
+        : 60.0; // free cloud GPUs: queue + model time
+    return (perGarment * math.max(1, outfit.length) + 4).round();
+  }
 
   String _formatSeconds(int s) =>
       s < 60 ? '$s с' : '${s ~/ 60} мин ${(s % 60).toString().padLeft(2, '0')} с';
@@ -456,6 +551,17 @@ class TryOnScreenState extends State<TryOnScreen> {
     }
     if (outfit.isEmpty) {
       setState(() => error = 'Добавьте в образ хотя бы одну вещь.');
+      return;
+    }
+    final unsupported = outfit.where((it) => !model.supports(it.category)).toList();
+    if (unsupported.isNotEmpty) {
+      setState(() => error =
+          '${model.title} не умеет: ${unsupported.map((it) => it.label).join(', ')}. '
+          'Выберите другую модель или уберите эти вещи.');
+      return;
+    }
+    if (!model.available) {
+      setState(() => error = '${model.title} сейчас недоступна: ${model.reason ?? 'нет связи'}');
       return;
     }
     if (newVariant) seed = math.Random().nextInt(1 << 30);
@@ -496,6 +602,7 @@ class TryOnScreenState extends State<TryOnScreen> {
         bodyHips: profile.hips,
         numSteps: quality,
         seed: seed,
+        model: model.id,
       );
       if (!mounted) return;
       setState(() {
@@ -609,6 +716,8 @@ class TryOnScreenState extends State<TryOnScreen> {
         const SizedBox(height: 14),
         _outfitSection(),
         const SizedBox(height: 14),
+        _modelSection(),
+        const SizedBox(height: 14),
         _qualitySection(),
         const SizedBox(height: 14),
         _extraParameters(),
@@ -684,10 +793,27 @@ class TryOnScreenState extends State<TryOnScreen> {
                         ),
                       ],
                     )
-                  : Image.file(
-                      File(personPhoto!.path),
-                      fit: BoxFit.contain,
-                      alignment: Alignment.topCenter,
+                  : Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Image.file(
+                          File(personPhoto!.path),
+                          key: ValueKey(personPhoto!.path),
+                          fit: BoxFit.contain,
+                          alignment: Alignment.topCenter,
+                          errorBuilder: (_, _, _) => const Center(
+                            child: Text(
+                              'Фото не открылось — выберите другое',
+                              style: TextStyle(color: Colors.white54),
+                            ),
+                          ),
+                        ),
+                        if (pickingPerson)
+                          const ColoredBox(
+                            color: Color(0x88000000),
+                            child: Center(child: CircularProgressIndicator()),
+                          ),
+                      ],
                     ),
             ),
           ),
@@ -695,26 +821,27 @@ class TryOnScreenState extends State<TryOnScreen> {
           Row(
             children: [
               Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: busy ? null : () => _pickPerson(ImageSource.gallery),
-                  icon: const Icon(Icons.photo_library_outlined, size: 18),
-                  label: const Text('Галерея'),
+                child: _PersonSourceButton(
+                  icon: Icons.photo_library_outlined,
+                  label: 'Галерея',
+                  onTap: busy || pickingPerson ? null : () => _pickPerson(ImageSource.gallery),
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: busy ? null : () => _pickPerson(ImageSource.camera),
-                  icon: const Icon(Icons.camera_alt_outlined, size: 18),
-                  label: const Text('Камера'),
+                child: _PersonSourceButton(
+                  icon: Icons.photo_camera_outlined,
+                  label: 'Камера',
+                  onTap: busy || pickingPerson ? null : () => _pickPerson(ImageSource.camera),
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: FilledButton.tonalIcon(
-                  onPressed: busy ? null : _useSavedAvatar,
-                  icon: const Icon(Icons.person, size: 18),
-                  label: const Text('Аватар'),
+                child: _PersonSourceButton(
+                  icon: Icons.person,
+                  label: 'Аватар',
+                  filled: true,
+                  onTap: busy || pickingPerson ? null : _useSavedAvatar,
                 ),
               ),
             ],
@@ -774,6 +901,122 @@ class TryOnScreenState extends State<TryOnScreen> {
     );
   }
 
+  Future<void> _chooseModel() async {
+    if (models.length <= 1 && !modelsLoading) unawaited(_loadModels(refresh: true));
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      backgroundColor: FitColors.card,
+      builder: (sheetContext) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(sheetContext).height * .8),
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            children: [
+              const Text(
+                'Модель примерки',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Облачные модели бесплатные, но дают лишь несколько минут GPU в день.',
+                style: TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+              const SizedBox(height: 8),
+              for (final m in models)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  enabled: m.available,
+                  leading: Icon(
+                    m.isLocal ? Icons.laptop_chromebook : Icons.cloud_outlined,
+                    color: m.available ? FitColors.accentSoft : Colors.white24,
+                  ),
+                  title: Text(m.title, style: const TextStyle(fontWeight: FontWeight.w700)),
+                  subtitle: Text(
+                    [
+                      m.where,
+                      m.limit,
+                      if (m.categories.length < 3)
+                        'только ${m.categories.map(categoryRu).join(', ').toLowerCase()}',
+                      m.available ? m.note : (m.reason ?? 'недоступна'),
+                      if (m.needsToken && m.available) 'без HF-токена лимит меньше',
+                    ].where((t) => t.isNotEmpty).join(' • '),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  trailing: m.id == modelId
+                      ? const Icon(Icons.check_circle, color: FitColors.accentSoft)
+                      : null,
+                  onTap: () => Navigator.pop(sheetContext, m.id),
+                ),
+              TextButton.icon(
+                onPressed: () {
+                  Navigator.pop(sheetContext);
+                  _loadModels(refresh: true);
+                },
+                icon: const Icon(Icons.refresh),
+                label: const Text('Проверить доступность заново'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      modelId = picked;
+      error = null;
+    });
+    SettingsStore.set('model', picked);
+  }
+
+  Widget _modelSection() {
+    final m = model;
+    return InkWell(
+      onTap: busy ? null : _chooseModel,
+      borderRadius: BorderRadius.circular(22),
+      child: SectionCard(
+        padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+        child: Row(
+          children: [
+            Icon(
+              m.isLocal ? Icons.laptop_chromebook : Icons.cloud_outlined,
+              size: 20,
+              color: m.available ? FitColors.accentSoft : FitColors.warn,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Модель: ${m.title}', style: const TextStyle(fontWeight: FontWeight.w800)),
+                  Text(
+                    m.available ? '${m.where} • ${m.limit}' : (m.reason ?? 'недоступна'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: m.available ? Colors.white54 : FitColors.warn,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (modelsLoading)
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              const Icon(Icons.chevron_right),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _qualitySection() {
     return SectionCard(
       padding: const EdgeInsets.all(12),
@@ -796,16 +1039,26 @@ class TryOnScreenState extends State<TryOnScreen> {
           SizedBox(
             width: double.infinity,
             child: SegmentedButton<int>(
-              segments: const [
-                ButtonSegment(value: 10, label: Text('Быстро')),
-                ButtonSegment(value: 20, label: Text('Баланс')),
-                ButtonSegment(value: 30, label: Text('Максимум')),
+              segments: [
+                for (final preset in kQualityPresets)
+                  ButtonSegment(value: preset.$1, label: Text(preset.$2)),
               ],
               selected: {quality},
               onSelectionChanged: busy
                   ? null
-                  : (s) => setState(() => quality = s.first),
+                  : (s) {
+                      setState(() => quality = s.first);
+                      SettingsStore.set('quality', s.first);
+                    },
             ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            model.isLocal
+                ? '$quality шагов модели. Лицо и фон остаются из вашего фото в полном разрешении, '
+                    'одежда дорисовывается и повышается в чёткости.'
+                : 'Облачная модель: число шагов ограничено самим сервисом, бесплатно несколько примерок в день.',
+            style: const TextStyle(color: Colors.white38, fontSize: 12),
           ),
         ],
       ),
@@ -964,7 +1217,7 @@ class TryOnScreenState extends State<TryOnScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Обычно ≈ ${_formatSeconds(eta)}. Можно переключать вкладки — результат не потеряется.',
+            '${model.title} • обычно ≈ ${_formatSeconds(eta)}. Можно переключать вкладки — результат не потеряется.',
             style: const TextStyle(color: Colors.white38, fontSize: 12),
           ),
         ],
@@ -1138,6 +1391,57 @@ class _AddTile extends StatelessWidget {
             SizedBox(height: 6),
             Text('Добавить\nвещь', textAlign: TextAlign.center),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PersonSourceButton extends StatelessWidget {
+  const _PersonSourceButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.filled = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+  final bool filled;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onTap != null;
+    return Material(
+      color: filled ? FitColors.accent.withValues(alpha: enabled ? .28 : .1) : Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: filled ? Colors.transparent : Colors.white24),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 20, color: enabled ? FitColors.accentSoft : Colors.white24),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.fade,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: enabled ? Colors.white : Colors.white38,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

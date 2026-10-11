@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'api.dart';
+import 'common.dart';
 
 class AvatarBodyProfile {
   AvatarBodyProfile._();
@@ -85,6 +86,16 @@ class AvatarPhotoStore {
   static String? _cachedOriginalPath;
   static String? _cachedPreviewPath;
   static String? lastCutoutError;
+
+  /// Bumped every time the avatar files are rewritten. The file names never
+  /// change, so widgets use this in their keys to show the new picture.
+  static int revision = 0;
+
+  static Future<void> _forgetCachedImages(Iterable<File> files) async {
+    for (final file in files) {
+      await FileImage(file).evict();
+    }
+  }
 
   static Future<Directory> _dir() => getApplicationDocumentsDirectory();
 
@@ -170,6 +181,8 @@ class AvatarPhotoStore {
       await legacy.delete();
     }
 
+    await _forgetCachedImages([original, preview]);
+    revision++;
     _cachedOriginalPath = original.path;
     _cachedPreviewPath = preview.path;
     return original.path;
@@ -211,7 +224,9 @@ class AvatarPhotoStore {
       if (await file.exists()) {
         await file.delete();
       }
+      await FileImage(file).evict();
     }
+    revision++;
     _cachedOriginalPath = null;
     _cachedPreviewPath = null;
   }
@@ -273,6 +288,7 @@ class _Avatar2DPreviewState extends State<Avatar2DPreview> {
               fit: StackFit.expand,
               children: [
                 BodyWarpImage(
+                  key: ValueKey('preview-${AvatarPhotoStore.revision}'),
                   path: path!,
                   profile: AvatarBodyProfile.current.snapshot(),
                 ),
@@ -461,6 +477,7 @@ class _Avatar2DScreenState extends State<Avatar2DScreen> {
 
   String? avatarPath;
   bool loading = true;
+  bool picking = false;
 
   late double height;
   late double weight;
@@ -512,25 +529,39 @@ class _Avatar2DScreenState extends State<Avatar2DScreen> {
       imageQuality: 94,
       maxWidth: 2200,
     );
-    if (image == null) return;
-    await AvatarPhotoStore.saveFromXFile(image);
-    final saved = await AvatarPhotoStore.loadPreviewPath();
-    if (!mounted) return;
-    setState(() => avatarPath = saved);
+    if (image == null || !mounted) return;
+    setState(() {
+      picking = true;
+      loading = avatarPath == null;
+    });
+    try {
+      await AvatarPhotoStore.saveFromXFile(image);
+      final saved = await AvatarPhotoStore.loadPreviewPath();
+      if (!mounted) return;
+      setState(() => avatarPath = saved);
+    } catch (e) {
+      if (mounted) showMessage(context, 'Не удалось сохранить фото: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          picking = false;
+          loading = false;
+        });
+      }
+    }
 
-    final error = AvatarPhotoStore.lastCutoutError;
-    if (error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Не удалось удалить фон через AI. Проверь backend и попробуй ещё раз.',
-          ),
-        ),
+    if (!mounted) return;
+    if (AvatarPhotoStore.lastCutoutError != null) {
+      showMessage(
+        context,
+        'Фото сохранено, но фон не удалён: нет связи с ноутбуком. Попробуйте ещё раз позже.',
       );
     }
   }
 
   Future<void> _deleteAvatar() async {
+    final ok = await confirmAction(context, title: 'Удалить аватар?');
+    if (!ok) return;
     await AvatarPhotoStore.delete();
     if (!mounted) return;
     setState(() => avatarPath = null);
@@ -571,7 +602,25 @@ class _Avatar2DScreenState extends State<Avatar2DScreen> {
                 : Stack(
                     fit: StackFit.expand,
                     children: [
-                      BodyWarpImage(path: avatarPath!, profile: live),
+                      BodyWarpImage(
+                        key: ValueKey('avatar-${AvatarPhotoStore.revision}'),
+                        path: avatarPath!,
+                        profile: live,
+                      ),
+                      if (picking)
+                        const ColoredBox(
+                          color: Color(0x99000000),
+                          child: Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                CircularProgressIndicator(),
+                                SizedBox(height: 12),
+                                Text('AI убирает фон...'),
+                              ],
+                            ),
+                          ),
+                        ),
                       const Positioned(
                         left: 14,
                         bottom: 14,
@@ -583,13 +632,13 @@ class _Avatar2DScreenState extends State<Avatar2DScreen> {
           const SizedBox(height: 14),
           if (avatarPath == null) ...[
             FilledButton.icon(
-              onPressed: () => _pick(ImageSource.camera),
+              onPressed: picking ? null : () => _pick(ImageSource.camera),
               icon: const Icon(Icons.camera_alt),
               label: const Text('Сфотографироваться'),
             ),
             const SizedBox(height: 10),
             OutlinedButton.icon(
-              onPressed: () => _pick(ImageSource.gallery),
+              onPressed: picking ? null : () => _pick(ImageSource.gallery),
               icon: const Icon(Icons.photo_library_outlined),
               label: const Text('Добавить фото из галереи'),
             ),
@@ -598,7 +647,7 @@ class _Avatar2DScreenState extends State<Avatar2DScreen> {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () => _pick(ImageSource.camera),
+                    onPressed: picking ? null : () => _pick(ImageSource.camera),
                     icon: const Icon(Icons.camera_alt_outlined),
                     label: const Text('Новое фото'),
                   ),
@@ -606,7 +655,7 @@ class _Avatar2DScreenState extends State<Avatar2DScreen> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () => _pick(ImageSource.gallery),
+                    onPressed: picking ? null : () => _pick(ImageSource.gallery),
                     icon: const Icon(Icons.photo_library_outlined),
                     label: const Text('Галерея'),
                   ),

@@ -38,15 +38,55 @@ for path in (UPLOAD_DIR, GENERATED_DIR, CATALOG_DIR, DATA_DIR):
     path.mkdir(parents=True, exist_ok=True)
 
 ENGINE = "FASHN VTON 1.5"
-APP_VERSION = "2.0.0"
+APP_VERSION = "3.0.0"
 # Provider: "auto" (Kaggle if its URL is set and online, otherwise Hugging Face Space),
 # "kaggle" (only Kaggle), "hf_space" (only Hugging Face Space).
 PROVIDER_MODE = os.getenv("FITME_AI_PROVIDER", "auto").strip().lower()
 FASHN_STEPS = max(10, min(int(os.getenv("FITME_FASHN_STEPS", "10")), 50))
 HF_SPACE_ID = os.getenv("FITME_HF_SPACE", "fashn-ai/fashn-vton-1.5").strip()
-HF_TOKEN = (os.getenv("HF_TOKEN") or "").strip() or None
+HF_TOKEN_FILE = DATA_DIR / "hf_token.txt"
 HF_STEPS = max(10, min(int(os.getenv("FITME_HF_STEPS", "30")), 50))
 VALID_CATEGORIES = {"upper_body", "lower_body", "dresses"}
+# Stretching the person photo to the body sliders distorts the face and background,
+# so it is off unless explicitly enabled.
+BODY_WARP = os.getenv("FITME_BODY_WARP", "0").strip().lower() in {"1", "true", "yes"}
+
+
+def hf_token() -> str | None:
+    """Free Hugging Face token (more ZeroGPU minutes): env HF_TOKEN or backend/data/hf_token.txt."""
+    value = (os.getenv("HF_TOKEN") or "").strip()
+    if not value and HF_TOKEN_FILE.exists():
+        value = HF_TOKEN_FILE.read_text(encoding="utf-8", errors="ignore").strip()
+    return value or None
+
+
+# Try-on models the app can choose from. "fashn" runs on your own GPU (or Kaggle);
+# the others run on free Hugging Face ZeroGPU Spaces (a few minutes of GPU per day).
+MODEL_CATALOG: list[dict[str, Any]] = [
+    {"id": "fashn", "title": "FASHN VTON 1.5", "where": "Ноутбук (ваша видеокарта)",
+     "categories": ["upper_body", "lower_body", "dresses"], "license": "Apache-2.0",
+     "limit": "без лимита", "note": "Основная модель: лучшая детализация + улучшение качества"},
+    {"id": "fashn_cloud", "title": "FASHN VTON 1.5 (облако)", "where": "Hugging Face ZeroGPU",
+     "categories": ["upper_body", "lower_body", "dresses"], "license": "Apache-2.0",
+     "limit": "≈5 мин GPU в день", "note": "Когда ноутбук выключен"},
+    {"id": "leffa", "title": "Leffa", "where": "Hugging Face ZeroGPU",
+     "categories": ["upper_body", "lower_body", "dresses"], "license": "MIT (+ условия датасетов)",
+     "limit": "≈5 мин GPU в день", "note": "Хорошо держит рисунок и надписи"},
+    {"id": "fitdit", "title": "FitDiT", "where": "Hugging Face ZeroGPU",
+     "categories": ["upper_body", "lower_body", "dresses"], "license": "CC BY-NC-SA 4.0",
+     "limit": "≈5 мин GPU в день", "note": "Сильная текстура ткани, только некоммерческое"},
+    {"id": "idm", "title": "IDM-VTON", "where": "Hugging Face ZeroGPU",
+     "categories": ["upper_body"], "license": "CC BY-NC-SA 4.0",
+     "limit": "≈5 мин GPU в день", "note": "Только верх, только некоммерческое"},
+    {"id": "ootd", "title": "OOTDiffusion", "where": "Hugging Face ZeroGPU",
+     "categories": ["upper_body", "lower_body", "dresses"], "license": "CC BY-NC-SA 4.0",
+     "limit": "≈5 мин GPU в день", "note": "Старее, для сравнения"},
+]
+MODEL_IDS = {m["id"] for m in MODEL_CATALOG}
+
+
+def model_info(model_id: str) -> dict[str, Any]:
+    return next((m for m in MODEL_CATALOG if m["id"] == model_id), MODEL_CATALOG[0])
 
 app = FastAPI(
     title="FitMe AI CLEAN MVP",
@@ -249,12 +289,12 @@ def remote_health(timeout: float = 8.0) -> tuple[bool, dict[str, Any], str | Non
 def hf_space_health() -> tuple[bool, dict[str, Any], str | None]:
     from .hf_space import HFSpace
 
-    space = HFSpace(HF_SPACE_ID, HF_TOKEN)
+    space = HFSpace(HF_SPACE_ID, hf_token())
     try:
         ok, error = space.status()
     finally:
         space.close()
-    return ok, {"space": HF_SPACE_ID, "token": bool(HF_TOKEN), "steps": HF_STEPS}, error
+    return ok, {"space": HF_SPACE_ID, "token": bool(hf_token()), "steps": HF_STEPS}, error
 
 
 def resolve_provider(timeout: float = 8.0) -> tuple[str, bool, dict[str, Any], str | None]:
@@ -750,7 +790,8 @@ def generate_remote(
     steps: int,
     seed: int,
 ) -> bytes:
-    """FASHN on Kaggle or on the local GPU server (same async /jobs API)."""
+    """FASHN on Kaggle or on the local GPU server (same async /jobs API).
+    The local server returns a full-resolution JPEG (crop + paste-back + upscale)."""
     with person_path.open("rb") as person_file, garment_path.open("rb") as garment_file:
         create = httpx.post(
             f"{remote_url}/jobs",
@@ -788,7 +829,8 @@ def generate_remote(
                 timeout=httpx.Timeout(connect=20.0, read=120.0, write=30.0, pool=20.0),
                 follow_redirects=True,
             )
-            if result.status_code != 200 or "image" not in result.headers.get("content-type", "").lower():
+            content_type = result.headers.get("content-type", "").lower()
+            if result.status_code != 200 or "image" not in content_type:
                 raise RuntimeError(f"GPU result HTTP {result.status_code}")
             return result.content
         if remote_status == "failed":
@@ -811,7 +853,7 @@ def generate_hf(
         photo_type = "flat-lay"
     return fashn_try_on(
         HF_SPACE_ID,
-        HF_TOKEN,
+        hf_token(),
         person_path,
         garment_path,
         fashn_category(category),
@@ -843,7 +885,12 @@ def run_outfit_job(
             job["step_label"] = item.get("label") or categoryRu_py(item["category"])
             job["step_started_at"] = utc_now_iso()
 
-            if provider == "hf_space":
+            if provider.startswith("space:"):
+                from .hf_space import space_try_on
+
+                png = space_try_on(provider.split(":", 1)[1], hf_token(), current_person,
+                                   item["prepared_path"], item["category"], steps, seed, item["photo_type"])
+            elif provider == "hf_space":
                 png = generate_hf(current_person, item["prepared_path"], item["category"],
                                   item["photo_type"], steps, seed)
             else:
@@ -852,7 +899,8 @@ def run_outfit_job(
                 png = generate_remote(remote_url, current_person, item["prepared_path"],
                                       item["category"], item["photo_type"], steps, seed)
 
-            step_path = GENERATED_DIR / f"{job_id}_step{index + 1}.png"
+            ext = ".jpg" if png[:3] == b"\xff\xd8\xff" else ".png"
+            step_path = GENERATED_DIR / f"{job_id}_step{index + 1}{ext}"
             step_path.write_bytes(png)
             job["step_results"].append(f"/generated/{step_path.name}")
             current_person = step_path
@@ -863,13 +911,14 @@ def run_outfit_job(
     except QuotaExceeded as exc:
         job["status"] = "failed"
         job["error"] = (
-            "Дневной лимит бесплатного GPU Hugging Face исчерпан. "
-            f"Попробуй завтра или запусти GPU-сервер на компьютере. ({str(exc)[:200]})"
+            "Дневной лимит бесплатного GPU Hugging Face исчерпан"
+            + ("" if hf_token() else " (без HF-токена лимит ещё меньше — запустите SET_HF_TOKEN.bat)")
+            + f". Выберите модель «FASHN VTON 1.5» на ноутбуке или попробуйте завтра. ({str(exc)[:160]})"
         )
     except Exception as exc:
         job["status"] = "failed"
         step = job.get("step") or 1
-        job["error"] = f"{ENGINE}, шаг {step}: {type(exc).__name__}: {str(exc)[:600]}"
+        job["error"] = f"{job.get('engine') or ENGINE}, шаг {step}: {type(exc).__name__}: {str(exc)[:600]}"
 
 
 def categoryRu_py(category: str) -> str:
@@ -958,6 +1007,56 @@ def ai_status():
             "dresses": ENGINE,
         },
     }
+
+
+_MODELS_CACHE: dict[str, Any] = {"at": 0.0, "items": None}
+_MODELS_LOCK = threading.Lock()
+
+
+def _space_stage(space_id: str) -> tuple[bool, str | None]:
+    from .hf_space import HFSpace
+
+    space = HFSpace(space_id, hf_token())
+    try:
+        return space.status()
+    finally:
+        space.close()
+
+
+@app.get("/api/v1/models")
+def list_models(refresh: bool = False):
+    """Models for the app's chooser with live availability (cached for 5 minutes)."""
+    with _MODELS_LOCK:
+        if not refresh and _MODELS_CACHE["items"] is not None and time.time() - _MODELS_CACHE["at"] < 300:
+            return {"items": _MODELS_CACHE["items"], "hf_token": bool(hf_token()), "cached": True}
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    from .hf_space import SPACE_MODELS
+
+    def check(m: dict[str, Any]) -> dict[str, Any]:
+        item = dict(m)
+        try:
+            if m["id"] == "fashn":
+                _, online, details, error = resolve_provider(timeout=6.0)
+                item["available"] = online
+                item["reason"] = None if online else "Запустите START_LOCAL_GPU.bat на ноутбуке"
+                item["upscaler"] = bool((details or {}).get("upscaler"))
+            else:
+                online, error = _space_stage(SPACE_MODELS[m["id"]][0])
+                item["available"] = online
+                item["reason"] = None if online else (error or "Space недоступен")
+                item["needs_token"] = not hf_token()
+        except Exception as exc:
+            item["available"] = False
+            item["reason"] = f"{type(exc).__name__}: {str(exc)[:120]}"
+        return item
+
+    with ThreadPoolExecutor(max_workers=len(MODEL_CATALOG)) as pool:
+        items = list(pool.map(check, MODEL_CATALOG))
+    with _MODELS_LOCK:
+        _MODELS_CACHE.update(at=time.time(), items=items)
+    return {"items": items, "hf_token": bool(hf_token()), "cached": False}
 
 
 @app.get("/api/v1/catalog")
@@ -1084,6 +1183,8 @@ def _catalog_item(item_id: str) -> dict[str, Any]:
 
 
 def _prepare_person(job_id: str, person_path: Path, body: dict[str, float]) -> tuple[Path, dict[str, Any]]:
+    if not BODY_WARP:
+        return person_path, {"body_warped": False, "reason": "disabled (keeps the photo sharp)"}
     try:
         return prepare_person_for_tryon(
             person_path,
@@ -1126,6 +1227,7 @@ async def _start_job(
     steps: int | None,
     seed: int | None,
     title: str,
+    model: str = "fashn",
 ) -> dict[str, Any]:
     """items: [{"category", "photo_type", "label", "catalog_item_id"? | "upload_index"?}]"""
     if not items:
@@ -1133,12 +1235,27 @@ async def _start_job(
     if len(items) > MAX_OUTFIT_ITEMS:
         raise HTTPException(status_code=422, detail=f"Максимум {MAX_OUTFIT_ITEMS} вещи за одну примерку")
 
-    provider, online, _, status_error = resolve_provider(timeout=10.0)
-    if not online:
+    model = (model or "fashn").strip()
+    if model not in MODEL_IDS:
+        raise HTTPException(status_code=422, detail=f"Неизвестная модель: {model}")
+    info = model_info(model)
+    unsupported = [str(raw.get("category")) for raw in items if str(raw.get("category")) not in info["categories"]]
+    if unsupported:
         raise HTTPException(
-            status_code=503,
-            detail=f"AI сервер недоступен. {status_error or ''} Запусти GPU-сервер на компьютере.",
+            status_code=422,
+            detail=f"{info['title']} умеет только: {', '.join(categoryRu_py(c) for c in info['categories'])}. "
+                   "Уберите лишние вещи или выберите другую модель.",
         )
+
+    if model == "fashn":
+        provider, online, _, status_error = resolve_provider(timeout=10.0)
+        if not online:
+            raise HTTPException(
+                status_code=503,
+                detail=f"AI сервер недоступен. {status_error or ''} Запусти GPU-сервер на компьютере.",
+            )
+    else:
+        provider = f"space:{model}"
 
     job_id = uuid.uuid4().hex[:10]
     person_path = UPLOAD_DIR / f"{job_id}_person{suffix_for(person_photo)}"
@@ -1193,7 +1310,8 @@ async def _start_job(
         "job_id": job_id,
         "status": "queued",
         "provider": provider,
-        "engine": ENGINE,
+        "model": model,
+        "engine": info["title"],
         "category": ordered[-1]["category"] if len(ordered) == 1 else "outfit",
         "garment_description": title or " + ".join(it["label"] for it in ordered),
         "created_at": utc_now_iso(),
@@ -1250,6 +1368,7 @@ async def create_try_on(
     person_photo: UploadFile = File(...),
     garment_photo: UploadFile | None = File(None),
     catalog_item_id: str | None = Form(None),
+    model: str = Form("fashn"),
 ):
     """Single garment (kept for older app builds)."""
     item: dict[str, Any] = {"category": category, "photo_type": garment_photo_type, "label": garment_description}
@@ -1273,6 +1392,7 @@ async def create_try_on(
         steps=num_steps,
         seed=seed,
         title=garment_description,
+        model=model,
     )
 
 
@@ -1291,6 +1411,7 @@ async def create_outfit_try_on(
     num_steps: int | None = Form(None),
     seed: int | None = Form(None),
     title: str = Form(""),
+    model: str = Form("fashn"),
     person_photo: UploadFile = File(...),
     garment_photos: list[UploadFile] = File(default=[]),
 ):
@@ -1313,6 +1434,7 @@ async def create_outfit_try_on(
         steps=num_steps,
         seed=seed,
         title=title,
+        model=model,
     )
 
 
@@ -1343,6 +1465,8 @@ def save_look(payload: SaveLookPayload):
         "title": payload.title or job.get("garment_description") or "AI Look",
         "provider": job.get("provider"),
         "engine": job.get("engine"),
+        "model": job.get("model") or "fashn",
+        "num_timesteps": job.get("num_timesteps"),
         "category": job.get("category"),
         "created_at": utc_now_iso(),
         "person_url": job.get("person_url"),

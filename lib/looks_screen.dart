@@ -104,6 +104,15 @@ class _LooksScreenState extends State<LooksScreen> {
                         children: [
                           for (final item in items)
                             Chip(label: Text(item['label']?.toString() ?? '')),
+                          if ((look['engine']?.toString() ?? '').isNotEmpty)
+                            Chip(
+                              avatar: const Icon(Icons.auto_awesome, size: 16),
+                              label: Text(
+                                look['num_timesteps'] == null
+                                    ? look['engine'].toString()
+                                    : '${look['engine']} • ${look['num_timesteps']} шагов',
+                              ),
+                            ),
                           for (final key in const ['gender', 'size', 'fit', 'color'])
                             if ((look[key]?.toString() ?? '').isNotEmpty)
                               Chip(
@@ -140,7 +149,13 @@ class _LooksScreenState extends State<LooksScreen> {
           ScreenTitle(
             'Мои луки',
             subtitle: 'Сохранённые результаты примерок',
-            trailing: IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
+            trailing: IconButton(
+              onPressed: () {
+                setState(() => loading = true);
+                _load();
+              },
+              icon: const Icon(Icons.refresh),
+            ),
           ),
           if (loading)
             const Padding(
@@ -149,7 +164,20 @@ class _LooksScreenState extends State<LooksScreen> {
             )
           else if (error != null)
             SectionCard(
-              child: Text(error!, style: const TextStyle(color: FitColors.danger)),
+              child: Column(
+                children: [
+                  Text(error!, style: const TextStyle(color: FitColors.danger)),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      setState(() => loading = true);
+                      _load();
+                    },
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Повторить'),
+                  ),
+                ],
+              ),
             )
           else if (looks.isEmpty)
             const Padding(

@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fitme_ai/api.dart';
 import 'package:fitme_ai/common.dart';
+import 'package:fitme_ai/tryon_screen.dart';
 
 void main() {
   group('categoryRu', () {
@@ -75,5 +76,25 @@ void main() {
     expect(item.photoType, 'model');
     item.onModel = false;
     expect(item.photoType, 'flat-lay');
+  });
+
+  test('try-on model parsing and category support', () {
+    final m = TryOnModel.fromJson({
+      'id': 'idm',
+      'title': 'IDM-VTON',
+      'categories': ['upper_body'],
+      'available': true,
+      'needs_token': true,
+    });
+    expect(m.isLocal, isFalse);
+    expect(m.supports('upper_body'), isTrue);
+    expect(m.supports('lower_body'), isFalse);
+    expect(m.needsToken, isTrue);
+    expect(TryOnModel.fallback.isLocal, isTrue);
+    expect(TryOnModel.fallback.supports('dresses'), isTrue);
+  });
+
+  test('quality presets go up to 50 steps', () {
+    expect(kQualityPresets.map((p) => p.$1), [15, 30, 50]);
   });
 }
