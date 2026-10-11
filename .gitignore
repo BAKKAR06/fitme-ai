@@ -68,3 +68,10 @@ benchmark/.venv/
 benchmark/results/
 benchmark/test_set/demo/
 git_push_log.txt
+install_log.txt
+start_log.txt
+gpu_server/.venv/
+gpu_server/weights/
+install_python_log.txt
+selftest_log.txt
+commit_msg.txt

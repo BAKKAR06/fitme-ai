@@ -32,12 +32,20 @@ echo ===== commit ===== >> "%LOG%"
 git rm --cached -q --ignore-unmatch git_push_log.txt check_log.txt >nul 2>&1
 git add -A >> "%LOG%" 2>&1
 git diff --cached --quiet
+if errorlevel 1 if exist "commit_msg.txt" (
+  git commit -F commit_msg.txt >> "%LOG%" 2>&1
+  if errorlevel 1 goto :fail
+  del commit_msg.txt
+  goto :committed
+)
+git diff --cached --quiet
 if errorlevel 1 (
   git commit -m "Cloud mode, model benchmark kit, Android and backend fixes" -m "- backend: free Hugging Face Space provider (FASHN on ZeroGPU), auto fallback Kaggle/HF, Pillow dependency, Dockerfile for HF Spaces" -m "- android: INTERNET permission for release APK; app polling survives network drops; analyzer clean, tests pass" -m "- benchmark/: HF Spaces runner, auto evaluation, Kaggle notebook; docs/ report; BUILD_APK.bat, CHECK_PROJECT.bat, DEPLOY_CLOUD.md" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_017zSqzGDXxDEhHmDrZ3xsRi" >> "%LOG%" 2>&1
   if errorlevel 1 goto :fail
 ) else (
   echo nothing new to commit >> "%LOG%"
 )
+:committed
 rem --- keep log files out of the (not yet pushed) commit ---
 git ls-files --error-unmatch git_push_log.txt >nul 2>&1
 if not errorlevel 1 (
