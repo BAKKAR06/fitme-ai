@@ -38,6 +38,12 @@ if errorlevel 1 (
 ) else (
   echo nothing new to commit >> "%LOG%"
 )
+rem --- keep log files out of the (not yet pushed) commit ---
+git ls-files --error-unmatch git_push_log.txt >nul 2>&1
+if not errorlevel 1 (
+  git rm --cached -q git_push_log.txt >> "%LOG%" 2>&1
+  git commit --amend --no-edit >> "%LOG%" 2>&1
+)
 git log --oneline -3 >> "%LOG%" 2>&1
 
 echo ===== push %BR% to your fork (Vireyx/main is not touched) ===== >> "%LOG%"
@@ -55,6 +61,6 @@ exit /b 0
 echo ===== FAILED ===== >> "%LOG%"
 type "%LOG%"
 echo.
-echo Push failed - see git_push_log.txt
+echo Push failed - see git_push_log.txt. If a GitHub sign-in window appeared, sign in as BAKKAR06 and run this file again.
 pause
 exit /b 1
