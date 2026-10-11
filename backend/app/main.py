@@ -38,7 +38,7 @@ for path in (UPLOAD_DIR, GENERATED_DIR, CATALOG_DIR, DATA_DIR):
     path.mkdir(parents=True, exist_ok=True)
 
 ENGINE = "FASHN VTON 1.5"
-APP_VERSION = "1.6.0-cloud"
+APP_VERSION = "2.0.0"
 # Provider: "auto" (Kaggle if its URL is set and online, otherwise Hugging Face Space),
 # "kaggle" (only Kaggle), "hf_space" (only Hugging Face Space).
 PROVIDER_MODE = os.getenv("FITME_AI_PROVIDER", "auto").strip().lower()
@@ -61,6 +61,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+API_KEY = (os.getenv("FITME_API_KEY") or "").strip()
+OPEN_PATHS = {"/", "/health", "/docs", "/openapi.json"}
+
+
+@app.middleware("http")
+async def require_api_key(request, call_next):
+    """When FITME_API_KEY is set (internet/tunnel mode) every request except /health needs it."""
+    if API_KEY and request.method != "OPTIONS" and request.url.path not in OPEN_PATHS:
+        supplied = request.headers.get("x-fitme-key") or request.query_params.get("key") or ""
+        if supplied != API_KEY:
+            return Response(content='{"detail":"Invalid or missing FitMe key"}', status_code=401, media_type="application/json")
+    return await call_next(request)
+
 
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 app.mount("/generated", StaticFiles(directory=str(GENERATED_DIR)), name="generated")
@@ -261,41 +275,6 @@ def resolve_provider(timeout: float = 8.0) -> tuple[str, bool, dict[str, Any], s
     if kaggle_error:
         details = {**details, "kaggle_error": kaggle_error}
     return "hf_space", online, details, error
-
-
-def run_hf_space(
-    job_id: str,
-    person_path: Path,
-    garment_path: Path,
-    category: str,
-) -> None:
-    from .hf_space import QuotaExceeded, fashn_try_on
-
-    JOBS[job_id]["status"] = "processing"
-    try:
-        png = fashn_try_on(
-            HF_SPACE_ID,
-            HF_TOKEN,
-            person_path,
-            garment_path,
-            fashn_category(category),
-            steps=HF_STEPS,
-        )
-        output_name = f"{job_id}_fashn.png"
-        (GENERATED_DIR / output_name).write_bytes(png)
-        JOBS[job_id]["status"] = "completed"
-        JOBS[job_id]["result_url"] = f"/generated/{output_name}"
-        JOBS[job_id]["completed_at"] = utc_now_iso()
-    except QuotaExceeded as exc:
-        JOBS[job_id]["status"] = "failed"
-        JOBS[job_id]["error"] = (
-            "Дневной лимит бесплатного GPU Hugging Face исчерпан. "
-            "Попробуй завтра или запусти Kaggle-ноутбук. "
-            f"({str(exc)[:200]})"
-        )
-    except Exception as exc:
-        JOBS[job_id]["status"] = "failed"
-        JOBS[job_id]["error"] = f"{ENGINE} (HF Space): {type(exc).__name__}: {str(exc)[:600]}"
 
 
 def browser_headers() -> dict[str, str]:
@@ -748,126 +727,153 @@ def prepare_garment_for_tryon(
     }
 
 
-def run_remote_fashn(
-    job_id: str,
+# --------------------------------------------------------------------------- #
+# Generation: one FASHN call = one garment. An outfit is a chain of calls where
+# each next garment is put on the previous result.
+# --------------------------------------------------------------------------- #
+OUTFIT_ORDER = {"lower_body": 0, "dresses": 1, "upper_body": 2}
+MAX_OUTFIT_ITEMS = 3
+GARMENT_PHOTO_TYPES = {"flat-lay", "model", "auto"}
+
+
+def order_outfit(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Bottoms first, then dresses, then tops/outerwear (stable inside a category)."""
+    return sorted(items, key=lambda it: OUTFIT_ORDER.get(it["category"], 9))
+
+
+def generate_remote(
+    remote_url: str,
     person_path: Path,
     garment_path: Path,
     category: str,
+    photo_type: str,
+    steps: int,
+    seed: int,
+) -> bytes:
+    """FASHN on Kaggle or on the local GPU server (same async /jobs API)."""
+    with person_path.open("rb") as person_file, garment_path.open("rb") as garment_file:
+        create = httpx.post(
+            f"{remote_url}/jobs",
+            data={
+                "category": fashn_category(category),
+                "garment_photo_type": photo_type,
+                "num_timesteps": str(steps),
+                "guidance_scale": "1.5",
+                "seed": str(seed),
+                "segmentation_free": "true",
+            },
+            files={
+                "person_photo": (person_path.name, person_file, image_mime(person_path)),
+                "garment_photo": (garment_path.name, garment_file, image_mime(garment_path)),
+            },
+            timeout=httpx.Timeout(connect=30.0, read=45.0, write=120.0, pool=30.0),
+            follow_redirects=True,
+        )
+    if create.status_code not in {200, 201, 202}:
+        raise RuntimeError(f"GPU job create HTTP {create.status_code}")
+    remote_job_id = str(create.json().get("job_id") or "")
+    if not remote_job_id:
+        raise RuntimeError("GPU server did not return job_id")
+
+    deadline = time.time() + 12 * 60
+    while time.time() < deadline:
+        poll = httpx.get(f"{remote_url}/jobs/{remote_job_id}", timeout=20.0, follow_redirects=True)
+        if poll.status_code != 200:
+            raise RuntimeError(f"GPU status HTTP {poll.status_code}")
+        state = poll.json()
+        remote_status = str(state.get("status") or "unknown")
+        if remote_status == "completed":
+            result = httpx.get(
+                f"{remote_url}/jobs/{remote_job_id}/result",
+                timeout=httpx.Timeout(connect=20.0, read=120.0, write=30.0, pool=20.0),
+                follow_redirects=True,
+            )
+            if result.status_code != 200 or "image" not in result.headers.get("content-type", "").lower():
+                raise RuntimeError(f"GPU result HTTP {result.status_code}")
+            return result.content
+        if remote_status == "failed":
+            raise RuntimeError(str(state.get("error") or "FASHN generation failed")[:500])
+        time.sleep(1.5)
+    raise RuntimeError("GPU generation timeout after 12 minutes")
+
+
+def generate_hf(
+    person_path: Path,
+    garment_path: Path,
+    category: str,
+    photo_type: str,
+    steps: int,
+    seed: int,
+) -> bytes:
+    from .hf_space import fashn_try_on
+
+    if photo_type == "auto":
+        photo_type = "flat-lay"
+    return fashn_try_on(
+        HF_SPACE_ID,
+        HF_TOKEN,
+        person_path,
+        garment_path,
+        fashn_category(category),
+        steps=steps,
+        garment_photo_type=photo_type,
+        seed=seed,
+    )
+
+
+def run_outfit_job(
+    job_id: str,
+    provider: str,
+    person_path: Path,
+    items: list[dict[str, Any]],
+    steps: int,
+    seed: int,
 ) -> None:
-    JOBS[job_id]["status"] = "processing"
+    from .hf_space import QuotaExceeded
+
+    job = JOBS[job_id]
+    job["status"] = "processing"
+    job["started_at"] = utc_now_iso()
+    current_person = person_path
     remote_url = get_remote_url()
 
     try:
-        if not remote_url:
-            raise RuntimeError(
-                "AI URL не настроен. Запусти START_FITME.bat и вставь URL из Kaggle."
-            )
+        for index, item in enumerate(items):
+            job["step"] = index + 1
+            job["step_label"] = item.get("label") or categoryRu_py(item["category"])
+            job["step_started_at"] = utc_now_iso()
 
-        # IMPORTANT: CLEAN MVP v2 uses a short POST that only creates a remote job.
-        # The long GPU generation runs in Kaggle background, so Cloudflare no longer
-        # has to keep one HTTP request open for several minutes.
-        with (
-            person_path.open("rb") as person_file,
-            garment_path.open("rb") as garment_file,
-        ):
-            create_response = httpx.post(
-                f"{remote_url}/jobs",
-                data={
-                    "category": fashn_category(category),
-                    "garment_photo_type": "flat-lay",
-                    "num_timesteps": str(FASHN_STEPS),
-                    "guidance_scale": "1.5",
-                    "seed": "42",
-                    "segmentation_free": "true",
-                },
-                files={
-                    "person_photo": (
-                        person_path.name,
-                        person_file,
-                        image_mime(person_path),
-                    ),
-                    "garment_photo": (
-                        garment_path.name,
-                        garment_file,
-                        image_mime(garment_path),
-                    ),
-                },
-                timeout=httpx.Timeout(
-                    connect=30.0,
-                    read=45.0,
-                    write=120.0,
-                    pool=30.0,
-                ),
-                follow_redirects=True,
-            )
+            if provider == "hf_space":
+                png = generate_hf(current_person, item["prepared_path"], item["category"],
+                                  item["photo_type"], steps, seed)
+            else:
+                if not remote_url:
+                    raise RuntimeError("GPU server URL is not configured")
+                png = generate_remote(remote_url, current_person, item["prepared_path"],
+                                      item["category"], item["photo_type"], steps, seed)
 
-        if create_response.status_code not in {200, 201, 202}:
-            raise RuntimeError(
-                f"Kaggle job create HTTP {create_response.status_code}"
-            )
+            step_path = GENERATED_DIR / f"{job_id}_step{index + 1}.png"
+            step_path.write_bytes(png)
+            job["step_results"].append(f"/generated/{step_path.name}")
+            current_person = step_path
 
-        remote_job = create_response.json()
-        remote_job_id = str(remote_job.get("job_id") or "")
-        if not remote_job_id:
-            raise RuntimeError("Kaggle не вернул job_id")
-
-        JOBS[job_id]["remote_job_id"] = remote_job_id
-
-        # Poll with short requests. Each request is safely below Cloudflare timeout.
-        deadline = time.time() + 12 * 60
-        while time.time() < deadline:
-            poll = httpx.get(
-                f"{remote_url}/jobs/{remote_job_id}",
-                timeout=20.0,
-                follow_redirects=True,
-            )
-            if poll.status_code != 200:
-                raise RuntimeError(
-                    f"Kaggle status HTTP {poll.status_code}"
-                )
-
-            state = poll.json()
-            remote_status = str(state.get("status") or "unknown")
-
-            if remote_status == "completed":
-                result = httpx.get(
-                    f"{remote_url}/jobs/{remote_job_id}/result",
-                    timeout=httpx.Timeout(
-                        connect=20.0,
-                        read=120.0,
-                        write=30.0,
-                        pool=20.0,
-                    ),
-                    follow_redirects=True,
-                )
-                if result.status_code != 200:
-                    raise RuntimeError(
-                        f"Kaggle result HTTP {result.status_code}"
-                    )
-                if "image" not in result.headers.get("content-type", "").lower():
-                    raise RuntimeError("Kaggle result is not an image")
-
-                output_name = f"{job_id}_fashn.png"
-                (GENERATED_DIR / output_name).write_bytes(result.content)
-
-                JOBS[job_id]["status"] = "completed"
-                JOBS[job_id]["result_url"] = f"/generated/{output_name}"
-                JOBS[job_id]["completed_at"] = utc_now_iso()
-                return
-
-            if remote_status == "failed":
-                remote_error = str(state.get("error") or "FASHN generation failed")
-                raise RuntimeError(remote_error[:500])
-
-            time.sleep(2)
-
-        raise RuntimeError("Kaggle generation timeout after 12 minutes")
-
-    except Exception as exc:
-        JOBS[job_id]["status"] = "failed"
-        JOBS[job_id]["error"] = (
-            f"{ENGINE}: {type(exc).__name__}: {str(exc)[:700]}"
+        job["status"] = "completed"
+        job["result_url"] = job["step_results"][-1]
+        job["completed_at"] = utc_now_iso()
+    except QuotaExceeded as exc:
+        job["status"] = "failed"
+        job["error"] = (
+            "Дневной лимит бесплатного GPU Hugging Face исчерпан. "
+            f"Попробуй завтра или запусти GPU-сервер на компьютере. ({str(exc)[:200]})"
         )
+    except Exception as exc:
+        job["status"] = "failed"
+        step = job.get("step") or 1
+        job["error"] = f"{ENGINE}, шаг {step}: {type(exc).__name__}: {str(exc)[:600]}"
+
+
+def categoryRu_py(category: str) -> str:
+    return {"upper_body": "Верх", "lower_body": "Низ", "dresses": "Платье"}.get(category, "Вещь")
 
 
 @app.get("/")
@@ -923,6 +929,8 @@ def health():
         "app": "FitMe AI",
         "status": "online",
         "version": APP_VERSION,
+        "api_key_required": bool(API_KEY),
+        "max_outfit_items": MAX_OUTFIT_ITEMS,
         "provider_mode": PROVIDER_MODE,
         "engine": ENGINE,
         "steps": FASHN_STEPS,
@@ -1061,6 +1069,168 @@ def delete_catalog_item(item_id: str):
     return {"status": "deleted", "item_id": item_id}
 
 
+def _clamp_steps(value: int | None, provider: str) -> int:
+    default = HF_STEPS if provider == "hf_space" else FASHN_STEPS
+    if value is None or value <= 0:
+        return default
+    return max(10, min(int(value), 50))
+
+
+def _catalog_item(item_id: str) -> dict[str, Any]:
+    item = next((x for x in load_json_list(CATALOG_FILE) if x.get("item_id") == item_id), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="Catalog item not found")
+    return item
+
+
+def _prepare_person(job_id: str, person_path: Path, body: dict[str, float]) -> tuple[Path, dict[str, Any]]:
+    try:
+        return prepare_person_for_tryon(
+            person_path,
+            UPLOAD_DIR / f"{job_id}_person_profile.jpg",
+            body_height=body["height"],
+            body_weight=body["weight"],
+            body_chest=body["chest"],
+            body_waist=body["waist"],
+            body_hips=body["hips"],
+        )
+    except Exception as exc:
+        return person_path, {"body_warped": False, "fallback": True, "error": f"{type(exc).__name__}: {str(exc)[:240]}"}
+
+
+def _prepare_garment(job_id: str, index: int, garment_path: Path, color: str, size: str, fit: str) -> tuple[Path, dict[str, Any]]:
+    if color == "Как на фото" and size.upper() == "M" and fit.title() == "Regular":
+        return garment_path, {"preprocessed": False}
+    try:
+        return prepare_garment_for_tryon(
+            garment_path,
+            UPLOAD_DIR / f"{job_id}_prepared_{index}.png",
+            selected_color=color,
+            selected_size=size,
+            selected_fit=fit,
+        )
+    except Exception as exc:
+        return garment_path, {"preprocessed": False, "fallback": True, "error": f"{type(exc).__name__}: {str(exc)[:240]}"}
+
+
+async def _start_job(
+    *,
+    person_photo: UploadFile,
+    items: list[dict[str, Any]],
+    uploads: list[UploadFile],
+    body: dict[str, float],
+    color: str,
+    size: str,
+    fit: str,
+    gender: str,
+    steps: int | None,
+    seed: int | None,
+    title: str,
+) -> dict[str, Any]:
+    """items: [{"category", "photo_type", "label", "catalog_item_id"? | "upload_index"?}]"""
+    if not items:
+        raise HTTPException(status_code=422, detail="Добавь хотя бы одну вещь")
+    if len(items) > MAX_OUTFIT_ITEMS:
+        raise HTTPException(status_code=422, detail=f"Максимум {MAX_OUTFIT_ITEMS} вещи за одну примерку")
+
+    provider, online, _, status_error = resolve_provider(timeout=10.0)
+    if not online:
+        raise HTTPException(
+            status_code=503,
+            detail=f"AI сервер недоступен. {status_error or ''} Запусти GPU-сервер на компьютере.",
+        )
+
+    job_id = uuid.uuid4().hex[:10]
+    person_path = UPLOAD_DIR / f"{job_id}_person{suffix_for(person_photo)}"
+    person_path.write_bytes(await person_photo.read())
+
+    prepared_items: list[dict[str, Any]] = []
+    first_source = {"source_name": "", "source_url": ""}
+    for index, raw in enumerate(items):
+        category = str(raw.get("category") or "upper_body")
+        photo_type = str(raw.get("photo_type") or "auto")
+        if category not in VALID_CATEGORIES:
+            raise HTTPException(status_code=422, detail="Invalid garment category")
+        if photo_type not in GARMENT_PHOTO_TYPES:
+            photo_type = "auto"
+
+        if raw.get("catalog_item_id"):
+            cat = _catalog_item(str(raw["catalog_item_id"]))
+            category = str(cat.get("category") or category)
+            garment_path = CATALOG_DIR / str(cat["file_name"])
+            garment_url = str(cat["image_url"])
+            label = str(raw.get("label") or cat.get("name") or categoryRu_py(category))
+            if index == 0:
+                first_source = {"source_name": str(cat.get("source_name") or ""), "source_url": str(cat.get("source_url") or "")}
+        else:
+            upload_index = int(raw.get("upload_index", -1))
+            if not 0 <= upload_index < len(uploads):
+                raise HTTPException(status_code=422, detail="garment photo is missing")
+            upload = uploads[upload_index]
+            garment_path = UPLOAD_DIR / f"{job_id}_garment{index}{suffix_for(upload)}"
+            garment_path.write_bytes(await upload.read())
+            garment_url = f"/uploads/{garment_path.name}"
+            label = str(raw.get("label") or categoryRu_py(category))
+
+        # Colour only makes sense for a single garment; size/fit apply to every item.
+        item_color = color if len(items) == 1 else "Как на фото"
+        prepared_path, prep = _prepare_garment(job_id, index, garment_path, item_color, size, fit)
+        prepared_items.append({
+            "category": category,
+            "photo_type": photo_type,
+            "label": label,
+            "garment_url": garment_url,
+            "prepared_path": prepared_path,
+            "preprocessing": prep,
+        })
+
+    ordered = order_outfit(prepared_items)
+    prepared_person, body_prep = _prepare_person(job_id, person_path, body)
+    num_steps = _clamp_steps(steps, provider)
+    used_seed = int(seed) if seed is not None and seed >= 0 else 42
+
+    JOBS[job_id] = {
+        "job_id": job_id,
+        "status": "queued",
+        "provider": provider,
+        "engine": ENGINE,
+        "category": ordered[-1]["category"] if len(ordered) == 1 else "outfit",
+        "garment_description": title or " + ".join(it["label"] for it in ordered),
+        "created_at": utc_now_iso(),
+        "person_url": f"/uploads/{person_path.name}",
+        "body_profile": body,
+        "body_preprocessing": body_prep,
+        "garment_url": ordered[0]["garment_url"],
+        "items": [
+            {"label": it["label"], "category": it["category"], "photo_type": it["photo_type"],
+             "garment_url": it["garment_url"], "preprocessing": it["preprocessing"]}
+            for it in ordered
+        ],
+        "total_steps": len(ordered),
+        "step": 0,
+        "step_label": None,
+        "step_results": [],
+        "num_timesteps": num_steps,
+        "seed": used_seed,
+        "gender": gender,
+        "size": size,
+        "fit": fit,
+        "color": color,
+        "source_name": first_source["source_name"],
+        "source_url": first_source["source_url"],
+        "result_url": None,
+        "error": None,
+    }
+
+    threading.Thread(
+        target=run_outfit_job,
+        args=(job_id, provider, prepared_person, ordered, num_steps, used_seed),
+        daemon=True,
+        name=f"fitme-{job_id}",
+    ).start()
+    return JOBS[job_id]
+
+
 @app.post("/api/v1/try-on/upload")
 async def create_try_on(
     garment_description: str = Form("garment"),
@@ -1074,174 +1244,76 @@ async def create_try_on(
     body_chest: float = Form(96.0),
     body_waist: float = Form(81.0),
     body_hips: float = Form(94.0),
+    garment_photo_type: str = Form("flat-lay"),
+    num_steps: int | None = Form(None),
+    seed: int | None = Form(None),
     person_photo: UploadFile = File(...),
     garment_photo: UploadFile | None = File(None),
     catalog_item_id: str | None = Form(None),
 ):
-    if category not in VALID_CATEGORIES:
-        raise HTTPException(status_code=422, detail="Invalid garment category")
-
-    provider, online, _, status_error = resolve_provider(timeout=10.0)
-    if not online:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "AI сервер недоступен. "
-                f"{status_error or ''} "
-                "Запусти Kaggle-ноутбук или проверь Hugging Face Space."
-            ),
-        )
-
-    job_id = uuid.uuid4().hex[:10]
-    person_suffix = suffix_for(person_photo)
-    person_path = UPLOAD_DIR / f"{job_id}_person{person_suffix}"
-    person_path.write_bytes(await person_photo.read())
-
-    source_name = ""
-    source_url = ""
-
+    """Single garment (kept for older app builds)."""
+    item: dict[str, Any] = {"category": category, "photo_type": garment_photo_type, "label": garment_description}
+    uploads: list[UploadFile] = []
     if catalog_item_id:
-        item = next(
-            (
-                x
-                for x in load_json_list(CATALOG_FILE)
-                if x.get("item_id") == catalog_item_id
-            ),
-            None,
-        )
-        if not item:
-            raise HTTPException(status_code=404, detail="Catalog item not found")
-
-        category = str(item.get("category") or category)
-        garment_description = (
-            garment_description.strip()
-            or str(item.get("description") or "")
-            or str(item.get("name") or "")
-            or "garment"
-        )
-        garment_path = CATALOG_DIR / str(item["file_name"])
-        garment_url = str(item["image_url"])
-        source_name = str(item.get("source_name") or "")
-        source_url = str(item.get("source_url") or "")
+        item["catalog_item_id"] = catalog_item_id
+    elif garment_photo is not None:
+        uploads.append(garment_photo)
+        item["upload_index"] = 0
     else:
-        if garment_photo is None:
-            raise HTTPException(
-                status_code=422,
-                detail="garment_photo or catalog_item_id is required",
-            )
-        garment_suffix = suffix_for(garment_photo)
-        garment_path = UPLOAD_DIR / f"{job_id}_garment{garment_suffix}"
-        garment_path.write_bytes(await garment_photo.read())
-        garment_url = f"/uploads/{garment_path.name}"
+        raise HTTPException(status_code=422, detail="garment_photo or catalog_item_id is required")
+    return await _start_job(
+        person_photo=person_photo,
+        items=[item],
+        uploads=uploads,
+        body={"height": body_height, "weight": body_weight, "chest": body_chest, "waist": body_waist, "hips": body_hips},
+        color=selected_color,
+        size=selected_size,
+        fit=selected_fit,
+        gender=selected_gender,
+        steps=num_steps,
+        seed=seed,
+        title=garment_description,
+    )
 
-    prepared_person_path = person_path
-    body_preprocessing: dict[str, Any] = {
-        "body_warped": False,
-        "height": body_height,
-        "weight": body_weight,
-        "chest": body_chest,
-        "waist": body_waist,
-        "hips": body_hips,
-    }
 
+@app.post("/api/v1/try-on/outfit")
+async def create_outfit_try_on(
+    items: str = Form(...),
+    selected_color: str = Form("Как на фото"),
+    selected_size: str = Form("M"),
+    selected_fit: str = Form("Regular"),
+    selected_gender: str = Form("Унисекс"),
+    body_height: float = Form(178.0),
+    body_weight: float = Form(74.0),
+    body_chest: float = Form(96.0),
+    body_waist: float = Form(81.0),
+    body_hips: float = Form(94.0),
+    num_steps: int | None = Form(None),
+    seed: int | None = Form(None),
+    title: str = Form(""),
+    person_photo: UploadFile = File(...),
+    garment_photos: list[UploadFile] = File(default=[]),
+):
+    """Up to 3 garments put on one after another (bottoms → dresses → tops)."""
     try:
-        candidate_person_path = UPLOAD_DIR / f"{job_id}_person_profile.jpg"
-        prepared_person_path, body_preprocessing = prepare_person_for_tryon(
-            person_path,
-            candidate_person_path,
-            body_height=body_height,
-            body_weight=body_weight,
-            body_chest=body_chest,
-            body_waist=body_waist,
-            body_hips=body_hips,
-        )
+        parsed = json.loads(items)
+        if not isinstance(parsed, list):
+            raise ValueError("items must be a list")
     except Exception as exc:
-        prepared_person_path = person_path
-        body_preprocessing = {
-            "body_warped": False,
-            "fallback": True,
-            "error": f"{type(exc).__name__}: {str(exc)[:240]}",
-        }
-
-    prepared_garment_path = garment_path
-    preprocessing: dict[str, Any] = {
-        "preprocessed": False,
-        "selected_color": selected_color,
-        "selected_size": selected_size,
-        "selected_fit": selected_fit,
-    }
-
-    if (
-        selected_color != "Как на фото"
-        or selected_size.upper() != "M"
-        or selected_fit.title() != "Regular"
-    ):
-        prepared_garment_path = UPLOAD_DIR / f"{job_id}_prepared.png"
-        try:
-            prepared_garment_path, preprocessing = prepare_garment_for_tryon(
-                garment_path,
-                prepared_garment_path,
-                selected_color=selected_color,
-                selected_size=selected_size,
-                selected_fit=selected_fit,
-            )
-        except Exception as exc:
-            # Never block the real try-on because of optional MVP styling.
-            # Fall back to the original garment image.
-            prepared_garment_path = garment_path
-            preprocessing = {
-                "preprocessed": False,
-                "fallback": True,
-                "error": f"{type(exc).__name__}: {str(exc)[:240]}",
-            }
-
-    JOBS[job_id] = {
-        "job_id": job_id,
-        "status": "queued",
-        "provider": provider,
-        "engine": ENGINE,
-        "category": category,
-        "garment_description": garment_description,
-        "created_at": utc_now_iso(),
-        "person_url": f"/uploads/{person_path.name}",
-        "prepared_person_url": (
-            f"/uploads/{prepared_person_path.name}"
-            if prepared_person_path.parent == UPLOAD_DIR
-            else f"/uploads/{person_path.name}"
-        ),
-        "body_profile": {
-            "height": body_height,
-            "weight": body_weight,
-            "chest": body_chest,
-            "waist": body_waist,
-            "hips": body_hips,
-        },
-        "body_preprocessing": body_preprocessing,
-        "garment_url": garment_url,
-        "prepared_garment_url": (
-            f"/uploads/{prepared_garment_path.name}"
-            if prepared_garment_path.parent == UPLOAD_DIR
-            else garment_url
-        ),
-        "gender": selected_gender,
-        "size": selected_size,
-        "fit": selected_fit,
-        "color": selected_color,
-        "preprocessing": preprocessing,
-        "source_name": source_name,
-        "source_url": source_url,
-        "result_url": None,
-        "error": None,
-    }
-
-    threading.Thread(
-        target=run_hf_space if provider == "hf_space" else run_remote_fashn,
-        args=(job_id, prepared_person_path, prepared_garment_path, category),
-        daemon=True,
-        name=f"fitme-{job_id}",
-    ).start()
-
-    return JOBS[job_id]
+        raise HTTPException(status_code=422, detail=f"Bad items JSON: {exc}") from exc
+    return await _start_job(
+        person_photo=person_photo,
+        items=parsed,
+        uploads=garment_photos,
+        body={"height": body_height, "weight": body_weight, "chest": body_chest, "waist": body_waist, "hips": body_hips},
+        color=selected_color,
+        size=selected_size,
+        fit=selected_fit,
+        gender=selected_gender,
+        steps=num_steps,
+        seed=seed,
+        title=title,
+    )
 
 
 @app.get("/api/v1/try-on/{job_id}")
@@ -1282,6 +1354,8 @@ def save_look(payload: SaveLookPayload):
         "fit": payload.fit or job.get("fit"),
         "color": payload.color or job.get("color"),
         "result_url": job.get("result_url"),
+        "items": job.get("items") or [],
+        "total_steps": job.get("total_steps") or 1,
     }
     items.insert(0, look)
     save_json_list(LOOKS_FILE, items)

@@ -78,3 +78,7 @@ commit_msg.txt
 servers_status.txt
 phone_log.txt
 tools/
+discovery.json
+tunnel_status.txt
+backend/data/
+backend/catalog/

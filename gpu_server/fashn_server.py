@@ -49,7 +49,22 @@ print("Loading FASHN VTON 1.5...")
 pipeline = TryOnPipeline(weights_dir=WEIGHTS_DIR, device="cuda")
 print("FASHN READY")
 
-app = FastAPI(title="FitMe FASHN Local GPU", version="1.2-local")
+import numpy as np
+
+# Human-parser classes that mean "a person is on the garment photo".
+BODY_LABEL_IDS = [1, 2, 12, 13, 14, 15, 16]  # face, hair, arms, hands, legs, feet, torso
+MODEL_PHOTO_BODY_SHARE = 0.015
+
+
+def detect_garment_photo_type(garment_rgb):
+    """flat-lay = garment alone (whole image is used); model = worn by a person
+    (FASHN then cuts out only the garment, so hands/faces of the model are not copied)."""
+    seg = pipeline.hp_model.predict(np.asarray(garment_rgb))
+    share = float(np.isin(seg, BODY_LABEL_IDS).mean())
+    return ("model" if share > MODEL_PHOTO_BODY_SHARE else "flat-lay"), share
+
+
+app = FastAPI(title="FitMe FASHN Local GPU", version="1.3-local")
 MAX_RESULTS = 30
 pipeline_lock = threading.Lock()
 jobs_lock = threading.Lock()
@@ -101,11 +116,15 @@ def generate_job(
         garment = ImageOps.exif_transpose(garment).convert("RGB")
 
         mapped = CATEGORY_MAP.get(category, "tops")
-        photo_type = (
-            garment_photo_type
-            if garment_photo_type in {"flat-lay", "model"}
-            else "flat-lay"
-        )
+        if garment_photo_type in {"flat-lay", "model"}:
+            photo_type = garment_photo_type
+        else:  # "auto": look for a person (face/hair/arms/hands/legs/feet/torso) on the garment photo
+            with pipeline_lock:
+                photo_type, body_share = detect_garment_photo_type(garment)
+            with jobs_lock:
+                JOBS[job_id]["body_share_on_garment_photo"] = round(body_share, 4)
+        with jobs_lock:
+            JOBS[job_id]["garment_photo_type"] = photo_type
         steps = max(10, min(int(num_timesteps), 50))
         cfg = max(1.0, min(float(guidance_scale), 3.0))
 

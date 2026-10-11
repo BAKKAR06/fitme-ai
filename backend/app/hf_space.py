@@ -138,6 +138,7 @@ def fashn_try_on(
     fashn_category: str,
     steps: int = 30,
     garment_photo_type: str = "flat-lay",
+    seed: int = 42,
 ) -> bytes:
     space = HFSpace(space_id, token)
     try:
@@ -151,7 +152,7 @@ def fashn_try_on(
                 garment_photo_type,
                 steps,
                 1.5,
-                42,
+                seed,
                 True,
             ],
         )

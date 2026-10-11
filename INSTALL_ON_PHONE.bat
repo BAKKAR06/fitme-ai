@@ -5,38 +5,22 @@ set "LOG=%~dp0phone_log.txt"
 echo FitMe install on phone %DATE% %TIME% > "%LOG%"
 set "ADB=%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"
 if not exist "%ADB%" set "ADB=adb"
+set "GPY=%~dp0gpu_server\.venv\Scripts\python.exe"
 
-echo ===== servers ===== >> "%LOG%"
-curl -s -m 5 http://127.0.0.1:7860/health >> "%LOG%" 2>&1 || echo GPU server OFFLINE >> "%LOG%"
-echo. >> "%LOG%"
-curl -s -m 15 http://127.0.0.1:8000/api/v1/ai/status >> "%LOG%" 2>&1 || echo backend OFFLINE >> "%LOG%"
-echo. >> "%LOG%"
-
-rem ---- one-time: 3D avatar draft is not used; three_js broke the APK build (needs CMake) ----
+rem ---- one-time: 3D avatar draft is not used (three_js needs CMake 3.31) ----
 if exist "lib\avatar_3d.dart" (
   if not exist "legacy" mkdir legacy
   move /Y "lib\avatar_3d.dart" "legacy\avatar_3d.dart.txt" >> "%LOG%" 2>&1
 )
 
-rem ---- GPU server: start it if it is not answering ----
-curl -s -m 5 http://127.0.0.1:7860/health >nul 2>&1
-if errorlevel 1 (
-  echo starting GPU server... >> "%LOG%"
-  start "FitMe GPU (FASHN)" /D "%~dp0gpu_server" cmd /k .venv\Scripts\python.exe fashn_server.py
+rem ---- key + discovery topic that are built into the app ----
+for /f "usebackq delims=" %%K in (`"%GPY%" gpu_server\discovery_value.py key`) do set "FKEY=%%K"
+for /f "usebackq delims=" %%T in (`"%GPY%" gpu_server\discovery_value.py topic`) do set "FTOPIC=%%T"
+if not defined FKEY (
+  echo ERROR: discovery.json - run INSTALL_LOCAL_GPU.bat first >> "%LOG%"
+  goto :end
 )
-
-rem ---- backend: start it if it is not answering ----
-curl -s -m 5 http://127.0.0.1:8000/health >nul 2>&1
-if errorlevel 1 (
-  echo starting backend... >> "%LOG%"
-  set "FITME_REMOTE_AI_URL=http://127.0.0.1:7860"
-  set "FITME_AI_PROVIDER=kaggle"
-  set "FITME_FASHN_STEPS=20"
-  start "FitMe Backend" /D "%~dp0backend" cmd /k .venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
-  timeout /t 8 >nul
-  curl -s -m 15 http://127.0.0.1:8000/api/v1/ai/status >> "%LOG%" 2>&1 || echo backend still OFFLINE >> "%LOG%"
-  echo. >> "%LOG%"
-)
+echo discovery topic: !FTOPIC! >> "%LOG%"
 
 rem ---- Java (JDK 21) for Android build: portable copy inside the project ----
 echo ===== JDK ===== >> "%LOG%"
@@ -52,8 +36,6 @@ if not defined JDKDIR (
   echo ERROR: JDK download failed >> "%LOG%"
   goto :end
 )
-echo JDK: !JDKDIR! >> "%LOG%"
-"!JDKDIR!\bin\java.exe" -version >> "%LOG%" 2>&1
 set "JAVA_HOME=!JDKDIR!"
 call flutter config --jdk-dir="!JDKDIR!" >> "%LOG%" 2>&1
 
@@ -64,14 +46,13 @@ for /f "skip=1 tokens=1,2" %%A in ('"%ADB%" devices 2^>nul') do (
   if "%%B"=="device" if not defined DEVICE set "DEVICE=%%A"
 )
 if not defined DEVICE (
-  echo ERROR: phone not authorized/connected. Unlock the phone and accept "Allow USB debugging". >> "%LOG%"
+  echo ERROR: phone not connected/authorized. Unlock it and accept "Allow USB debugging". >> "%LOG%"
   goto :end
 )
-"%ADB%" -s !DEVICE! reverse tcp:8000 tcp:8000 >> "%LOG%" 2>&1
 
-echo [1/3] Building APK (first build 3-10 min)...
+echo [1/3] Building APK...
 echo ===== flutter build apk ===== >> "%LOG%"
-call flutter build apk --release >> "%LOG%" 2>&1
+call flutter build apk --release --dart-define=FITME_KEY=!FKEY! --dart-define=FITME_TOPIC=!FTOPIC! >> "%LOG%" 2>&1
 if errorlevel 1 (
   echo ERROR: build failed >> "%LOG%"
   goto :end
@@ -84,11 +65,15 @@ if errorlevel 1 (
   echo ERROR: install failed >> "%LOG%"
   goto :end
 )
-
-echo [3/3] Starting app...
-echo ===== start ===== >> "%LOG%"
+"%ADB%" -s !DEVICE! reverse tcp:8000 tcp:8000 >> "%LOG%" 2>&1
 "%ADB%" -s !DEVICE! shell am start -n com.fitme.fitme_ai/.MainActivity >> "%LOG%" 2>&1
-echo ===== DONE ===== >> "%LOG%"
+echo ===== INSTALLED ===== >> "%LOG%"
+
+echo [3/3] Starting servers (GPU + backend + wireless)...
+type "%LOG%"
+endlocal
+call "%~dp0START_LOCAL_GPU.bat"
+exit /b 0
 
 :end
 type "%LOG%"

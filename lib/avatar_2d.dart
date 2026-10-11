@@ -8,24 +8,67 @@ import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'api.dart';
+
 class AvatarBodyProfile {
   AvatarBodyProfile._();
 
   static final AvatarBodyProfile current = AvatarBodyProfile._();
 
-  double height = 178;
-  double weight = 74;
-  double chest = 96;
-  double waist = 81;
-  double hips = 94;
+  double _height = 178;
+  double _weight = 74;
+  double _chest = 96;
+  double _waist = 81;
+  double _hips = 94;
+
+  double get height => _height;
+  double get weight => _weight;
+  double get chest => _chest;
+  double get waist => _waist;
+  double get hips => _hips;
+
+  set height(double v) => _set(() => _height = v);
+  set weight(double v) => _set(() => _weight = v);
+  set chest(double v) => _set(() => _chest = v);
+  set waist(double v) => _set(() => _waist = v);
+  set hips(double v) => _set(() => _hips = v);
+
+  void _set(void Function() change) {
+    change();
+    if (identical(this, current)) {
+      SettingsStore.set('body', {
+        'height': _height,
+        'weight': _weight,
+        'chest': _chest,
+        'waist': _waist,
+        'hips': _hips,
+      });
+    }
+  }
+
+  /// Restores measurements saved by a previous app run.
+  static void loadSaved() {
+    final saved = SettingsStore.get<Map<String, dynamic>>('body');
+    if (saved == null) return;
+    double read(String key, double fallback, double min, double max) {
+      final value = saved[key];
+      return value is num ? value.toDouble().clamp(min, max) : fallback;
+    }
+
+    current._height = read('height', 178, 145, 210);
+    current._weight = read('weight', 74, 40, 140);
+    current._chest = read('chest', 96, 70, 140);
+    current._waist = read('waist', 81, 55, 130);
+    current._hips = read('hips', 94, 70, 150);
+  }
 
   AvatarBodyProfile snapshot() {
     final p = AvatarBodyProfile._();
-    p.height = height;
-    p.weight = weight;
-    p.chest = chest;
-    p.waist = waist;
-    p.hips = hips;
+    p._height = _height;
+    p._weight = _weight;
+    p._chest = _chest;
+    p._waist = _waist;
+    p._hips = _hips;
     return p;
   }
 
@@ -38,11 +81,6 @@ class AvatarBodyProfile {
 class AvatarPhotoStore {
   AvatarPhotoStore._();
 
-  static const String _apiBaseUrl = String.fromEnvironment(
-    'API_BASE_URL',
-    defaultValue: 'http://127.0.0.1:8000',
-  );
-  static const String _cutoutUrl = '$_apiBaseUrl/api/v1/avatar/cutout';
 
   static String? _cachedOriginalPath;
   static String? _cachedPreviewPath;
@@ -138,7 +176,11 @@ class AvatarPhotoStore {
   }
 
   static Future<Uint8List> _requestAiCutout(Uint8List bytes) async {
-    final request = http.MultipartRequest('POST', Uri.parse(_cutoutUrl));
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('${ServerConfig.baseUrl}/api/v1/avatar/cutout'),
+    );
+    request.headers.addAll(ServerConfig.headers);
     request.files.add(
       http.MultipartFile.fromBytes(
         'photo',
