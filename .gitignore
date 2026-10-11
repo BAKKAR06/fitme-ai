@@ -75,3 +75,6 @@ gpu_server/weights/
 install_python_log.txt
 selftest_log.txt
 commit_msg.txt
+servers_status.txt
+phone_log.txt
+tools/

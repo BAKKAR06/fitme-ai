@@ -18,7 +18,7 @@ Flutter (Android) → бэкенд FastAPI на ПК → модель FASHN VTON
 |---|---|
 | `lib/main.dart` | Приложение: экраны, API-клиент |
 | `lib/avatar_2d.dart` | 2D-аватар и вырезка фона |
-| `lib/avatar_3d.dart` | Черновик 3D-аватара (сейчас не подключён) |
+| `legacy/avatar_3d.dart.txt` | Черновик 3D-аватара (не используется, вынесен из сборки) |
 | `backend/app/main.py` | Бэкенд FastAPI |
 | `KAGGLE/FitMe_FASHN_VTON_Kaggle.ipynb` | GPU-сервер FASHN + туннель Cloudflare |
 | `START_FITME.bat` | Запуск с компьютера (Kaggle + телефон по USB) |

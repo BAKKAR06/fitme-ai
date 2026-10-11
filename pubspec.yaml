@@ -36,7 +36,6 @@ dependencies:
   cupertino_icons: ^1.0.8
   image_picker: ^1.2.3
   url_launcher: ^6.3.2
-  three_js: 0.3.0
   path_provider: ^2.1.6
   http: ^1.6.0
 
