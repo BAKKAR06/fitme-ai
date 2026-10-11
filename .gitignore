@@ -82,3 +82,4 @@ discovery.json
 tunnel_status.txt
 backend/data/
 backend/catalog/
+close_log.txt

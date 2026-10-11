@@ -30,6 +30,8 @@ if not exist "tools\cloudflared.exe" (
 )
 
 echo Stopping old FitMe processes...
+rem closes old GPU/backend/tunnel windows (an old tunnel would keep announcing a second address)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0gpu_server\close_extra_windows.ps1" -StopAll >> "%LOG%" 2>&1
 for %%Q in (7860 8000) do (
   for /f "tokens=5" %%P in ('netstat -aon ^| findstr ":%%Q " ^| findstr "LISTENING"') do taskkill /PID %%P /F >nul 2>&1
 )
