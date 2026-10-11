@@ -38,7 +38,11 @@ class AvatarBodyProfile {
 class AvatarPhotoStore {
   AvatarPhotoStore._();
 
-  static const String _cutoutUrl = 'http://127.0.0.1:8000/api/v1/avatar/cutout';
+  static const String _apiBaseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'http://127.0.0.1:8000',
+  );
+  static const String _cutoutUrl = '$_apiBaseUrl/api/v1/avatar/cutout';
 
   static String? _cachedOriginalPath;
   static String? _cachedPreviewPath;

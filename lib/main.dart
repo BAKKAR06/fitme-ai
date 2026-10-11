@@ -163,7 +163,7 @@ class FitMeApi {
         'body_chest': bodyChest.toStringAsFixed(1),
         'body_waist': bodyWaist.toStringAsFixed(1),
         'body_hips': bodyHips.toStringAsFixed(1),
-        if (catalogItemId != null) 'catalog_item_id': catalogItemId,
+        'catalog_item_id': ?catalogItemId,
       },
       files: files,
     );
@@ -247,10 +247,10 @@ class FitMeApi {
       body: {
         'job_id': jobId,
         if (title != null && title.trim().isNotEmpty) 'title': title.trim(),
-        if (gender != null) 'gender': gender,
-        if (size != null) 'size': size,
-        if (fit != null) 'fit': fit,
-        if (color != null) 'color': color,
+        'gender': ?gender,
+        'size': ?size,
+        'fit': ?fit,
+        'color': ?color,
       },
     );
   }
@@ -521,7 +521,7 @@ Future<GarmentTypeChoice?> showGarmentTypePicker(
                     Expanded(
                       child: ListView.separated(
                         itemCount: items.length,
-                        separatorBuilder: (_, __) =>
+                        separatorBuilder: (_, _) =>
                             const Divider(height: 1, color: Colors.white10),
                         itemBuilder: (context, index) {
                           final item = items[index];
@@ -953,6 +953,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
         );
         if (!mounted) return;
         await _load();
+        if (!mounted) return;
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('Добавлено: ${item.name}')));
       } catch (e) {
@@ -1498,7 +1499,9 @@ class _TryOnScreenState extends State<TryOnScreen> {
         setState(() {
           busy = false;
           status = 'error';
-          error = 'FASHN сервер не готов. Запусти Kaggle notebook и START_FITME.bat.';
+          error = ai['error'] != null
+              ? 'AI сервер не готов: ${ai['error']}'
+              : 'AI сервер не готов. Попробуй ещё раз через минуту.';
         });
         return;
       }
@@ -1539,10 +1542,12 @@ class _TryOnScreenState extends State<TryOnScreen> {
   }
 
   Future<void> _poll(String id) async {
+    var networkErrors = 0;
     for (var i = 0; i < 240; i++) {
       await Future<void>.delayed(const Duration(seconds: 2));
       try {
         final job = await FitMeApi.getJob(id);
+        networkErrors = 0;
         if (!mounted) return;
         final s = job['status']?.toString() ?? 'unknown';
         setState(() {
@@ -1571,7 +1576,7 @@ class _TryOnScreenState extends State<TryOnScreen> {
                 'В CLEAN MVP v2 генерация идёт через фоновые job-запросы; '
                 'если ошибка повторилась — перезапусти Kaggle notebook.';
           } else if (rawError.toLowerCase().contains('offline')) {
-            friendly = 'FASHN сервер недоступен. Перезапусти Kaggle notebook и START_FITME.bat.';
+            friendly = 'AI сервер недоступен. Попробуй ещё раз через минуту.';
           } else if (rawError.isNotEmpty) {
             friendly = rawError.length > 280
                 ? '${rawError.substring(0, 280)}…'
@@ -1584,11 +1589,15 @@ class _TryOnScreenState extends State<TryOnScreen> {
           return;
         }
       } catch (e) {
+        // Mobile networks drop requests now and then: retry a few times
+        // before giving up on a job that is still running on the server.
+        networkErrors++;
+        if (networkErrors < 5) continue;
         if (!mounted) return;
         setState(() {
           busy = false;
           status = 'error';
-          error = 'Ошибка статуса: $e';
+          error = 'Нет связи с сервером: $e';
         });
         return;
       }

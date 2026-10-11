@@ -1,0 +1,4 @@
+# Optional: AI background removal for the 2D avatar (/api/v1/avatar/cutout).
+# Installed separately because onnxruntime may not have wheels for the newest Python.
+# If it fails, the rest of FitMe still works; only avatar cutout is unavailable.
+rembg[cpu]>=2.0.60

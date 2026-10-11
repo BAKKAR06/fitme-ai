@@ -23,7 +23,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(
+    os.getenv("FITME_STORAGE_DIR") or Path(__file__).resolve().parent.parent
+)
 UPLOAD_DIR = BASE_DIR / "uploads"
 GENERATED_DIR = BASE_DIR / "generated"
 CATALOG_DIR = BASE_DIR / "catalog"
@@ -36,13 +38,19 @@ for path in (UPLOAD_DIR, GENERATED_DIR, CATALOG_DIR, DATA_DIR):
     path.mkdir(parents=True, exist_ok=True)
 
 ENGINE = "FASHN VTON 1.5"
-PROVIDER = "remote_fashn"
+APP_VERSION = "1.6.0-cloud"
+# Provider: "auto" (Kaggle if its URL is set and online, otherwise Hugging Face Space),
+# "kaggle" (only Kaggle), "hf_space" (only Hugging Face Space).
+PROVIDER_MODE = os.getenv("FITME_AI_PROVIDER", "auto").strip().lower()
 FASHN_STEPS = max(10, min(int(os.getenv("FITME_FASHN_STEPS", "10")), 50))
+HF_SPACE_ID = os.getenv("FITME_HF_SPACE", "fashn-ai/fashn-vton-1.5").strip()
+HF_TOKEN = (os.getenv("HF_TOKEN") or "").strip() or None
+HF_STEPS = max(10, min(int(os.getenv("FITME_HF_STEPS", "30")), 50))
 VALID_CATEGORIES = {"upper_body", "lower_body", "dresses"}
 
 app = FastAPI(
     title="FitMe AI CLEAN MVP",
-    version="1.5.1-ai-cutout",
+    version=APP_VERSION,
     description="FitMe MVP: Flutter -> FastAPI -> FASHN VTON 1.5 on Kaggle GPU",
 )
 
@@ -222,6 +230,72 @@ def remote_health(timeout: float = 8.0) -> tuple[bool, dict[str, Any], str | Non
         return True, details, None
     except Exception as exc:
         return False, {}, f"{type(exc).__name__}: {exc}"
+
+
+def hf_space_health() -> tuple[bool, dict[str, Any], str | None]:
+    from .hf_space import HFSpace
+
+    space = HFSpace(HF_SPACE_ID, HF_TOKEN)
+    try:
+        ok, error = space.status()
+    finally:
+        space.close()
+    return ok, {"space": HF_SPACE_ID, "token": bool(HF_TOKEN), "steps": HF_STEPS}, error
+
+
+def resolve_provider(timeout: float = 8.0) -> tuple[str, bool, dict[str, Any], str | None]:
+    """Returns (provider, online, details, error)."""
+    if PROVIDER_MODE in {"kaggle", "remote_fashn"}:
+        online, details, error = remote_health(timeout)
+        return "remote_fashn", online, details, error
+    if PROVIDER_MODE == "hf_space":
+        online, details, error = hf_space_health()
+        return "hf_space", online, details, error
+
+    kaggle_error = None
+    if get_remote_url():
+        online, details, kaggle_error = remote_health(timeout)
+        if online:
+            return "remote_fashn", True, details, None
+    online, details, error = hf_space_health()
+    if kaggle_error:
+        details = {**details, "kaggle_error": kaggle_error}
+    return "hf_space", online, details, error
+
+
+def run_hf_space(
+    job_id: str,
+    person_path: Path,
+    garment_path: Path,
+    category: str,
+) -> None:
+    from .hf_space import QuotaExceeded, fashn_try_on
+
+    JOBS[job_id]["status"] = "processing"
+    try:
+        png = fashn_try_on(
+            HF_SPACE_ID,
+            HF_TOKEN,
+            person_path,
+            garment_path,
+            fashn_category(category),
+            steps=HF_STEPS,
+        )
+        output_name = f"{job_id}_fashn.png"
+        (GENERATED_DIR / output_name).write_bytes(png)
+        JOBS[job_id]["status"] = "completed"
+        JOBS[job_id]["result_url"] = f"/generated/{output_name}"
+        JOBS[job_id]["completed_at"] = utc_now_iso()
+    except QuotaExceeded as exc:
+        JOBS[job_id]["status"] = "failed"
+        JOBS[job_id]["error"] = (
+            "Дневной лимит бесплатного GPU Hugging Face исчерпан. "
+            "Попробуй завтра или запусти Kaggle-ноутбук. "
+            f"({str(exc)[:200]})"
+        )
+    except Exception as exc:
+        JOBS[job_id]["status"] = "failed"
+        JOBS[job_id]["error"] = f"{ENGINE} (HF Space): {type(exc).__name__}: {str(exc)[:600]}"
 
 
 def browser_headers() -> dict[str, str]:
@@ -800,7 +874,7 @@ def run_remote_fashn(
 def root():
     return {
         "app": "FitMe AI CLEAN MVP",
-        "version": "1.5.1-ai-cutout",
+        "version": APP_VERSION,
         "docs": "/docs",
     }
 
@@ -848,21 +922,22 @@ def health():
     return {
         "app": "FitMe AI",
         "status": "online",
-        "version": "1.5.1-ai-cutout",
-        "provider": PROVIDER,
+        "version": APP_VERSION,
+        "provider_mode": PROVIDER_MODE,
         "engine": ENGINE,
         "steps": FASHN_STEPS,
         "remote_configured": bool(get_remote_url()),
+        "hf_space": HF_SPACE_ID,
     }
 
 
 @app.get("/api/v1/ai/status")
 def ai_status():
-    online, details, error = remote_health()
+    provider, online, details, error = resolve_provider()
     return {
-        "provider": PROVIDER,
+        "provider": provider,
         "engine": ENGINE,
-        "steps": FASHN_STEPS,
+        "steps": HF_STEPS if provider == "hf_space" else FASHN_STEPS,
         "real_ai": True,
         "online": online,
         "remote_ai_online": online,
@@ -1006,14 +1081,14 @@ async def create_try_on(
     if category not in VALID_CATEGORIES:
         raise HTTPException(status_code=422, detail="Invalid garment category")
 
-    online, _, status_error = remote_health(timeout=10.0)
+    provider, online, _, status_error = resolve_provider(timeout=10.0)
     if not online:
         raise HTTPException(
             status_code=503,
             detail=(
-                "FASHN server offline. "
+                "AI сервер недоступен. "
                 f"{status_error or ''} "
-                "Run Kaggle notebook and START_FITME.bat."
+                "Запусти Kaggle-ноутбук или проверь Hugging Face Space."
             ),
         )
 
@@ -1123,7 +1198,7 @@ async def create_try_on(
     JOBS[job_id] = {
         "job_id": job_id,
         "status": "queued",
-        "provider": PROVIDER,
+        "provider": provider,
         "engine": ENGINE,
         "category": category,
         "garment_description": garment_description,
@@ -1160,7 +1235,7 @@ async def create_try_on(
     }
 
     threading.Thread(
-        target=run_remote_fashn,
+        target=run_hf_space if provider == "hf_space" else run_remote_fashn,
         args=(job_id, prepared_person_path, prepared_garment_path, category),
         daemon=True,
         name=f"fitme-{job_id}",

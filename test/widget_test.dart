@@ -1,30 +1,36 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fitme_ai/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  group('categoryRu', () {
+    test('maps backend categories to Russian labels', () {
+      expect(categoryRu('upper_body'), 'Верх');
+      expect(categoryRu('lower_body'), 'Низ');
+      expect(categoryRu('dresses'), 'Платье');
+      expect(categoryRu('unknown'), 'Верх');
+    });
+  });
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+  group('garmentTypeFor', () {
+    test('detects garment type from product title', () {
+      expect(garmentTypeFor('Oversize T-Shirt Black', 'upper_body'), 'Футболка');
+      expect(garmentTypeFor('Джинсы прямого кроя', 'lower_body'), 'Джинсы');
+      expect(garmentTypeFor('Летнее платье миди', 'dresses'), 'Платье');
+      expect(garmentTypeFor('Wool coat', 'upper_body'), 'Пальто');
+    });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    test('falls back to category default', () {
+      expect(garmentTypeFor('Item 123', 'upper_body'), 'Футболка');
+      expect(garmentTypeFor('Item 123', 'lower_body'), 'Брюки');
+      expect(garmentTypeFor('Item 123', 'dresses'), 'Платье');
+    });
+  });
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+  test('every garment type choice has a valid AI category', () {
+    const valid = {'upper_body', 'lower_body', 'dresses'};
+    for (final choice in garmentTypeChoices) {
+      expect(valid.contains(choice.aiCategory), isTrue, reason: choice.label);
+    }
   });
 }

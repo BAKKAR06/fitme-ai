@@ -61,3 +61,10 @@ local_ai/
 *.v*_backup
 *.before_*
 *.iml
+
+# FitMe checks / benchmark outputs
+check_log.txt
+benchmark/.venv/
+benchmark/results/
+benchmark/test_set/demo/
+git_push_log.txt

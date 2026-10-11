@@ -1,17 +1,63 @@
-# fitme_ai
+# FitMe AI
 
-A new Flutter project.
+Мобильное приложение для виртуальной примерки одежды.
+Flutter (Android) → бэкенд FastAPI на ПК → модель FASHN VTON 1.5 на GPU в Kaggle.
 
-## Getting Started
+## Что умеет
 
-This project is a starting point for a Flutter application.
+- **Примерка**: фото человека + фото вещи (верх, низ, платье) → результат от FASHN VTON 1.5.
+- **Каталог**: добавить вещь по ссылке на товар (фото берётся автоматически) или загрузить своё фото.
+- **Настройки вещи**: цвет (перекраска с сохранением теней), размер XS–XXL, посадка Slim/Regular/Oversize. Это примерная визуализация, а не точная размерная сетка бренда.
+- **Параметры тела**: рост, вес, грудь, талия, бёдра. Фото человека подгоняется под эти пропорции до генерации.
+- **2D-аватар**: вырезка человека с фона (rembg) и превью с параметрами тела.
+- **Луки**: сохранение и удаление результатов.
 
-A few resources to get you started if this is your first Flutter project:
+## Структура
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+| Путь | Что там |
+|---|---|
+| `lib/main.dart` | Приложение: экраны, API-клиент |
+| `lib/avatar_2d.dart` | 2D-аватар и вырезка фона |
+| `lib/avatar_3d.dart` | Черновик 3D-аватара (сейчас не подключён) |
+| `backend/app/main.py` | Бэкенд FastAPI |
+| `KAGGLE/FitMe_FASHN_VTON_Kaggle.ipynb` | GPU-сервер FASHN + туннель Cloudflare |
+| `START_FITME.bat` | Запуск с компьютера (Kaggle + телефон по USB) |
+| `BUILD_APK.bat`, `DEPLOY_CLOUD.md` | Облачный режим: APK, который работает без компьютера |
+| `benchmark/` | Сравнение моделей примерки (Hugging Face Spaces, Kaggle) |
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Первый запуск
+
+1. Установите Python 3.11 или 3.12 и Flutter SDK, включите на телефоне отладку по USB.
+2. Запустите `backend\setup_backend.bat`. Он создаст `.venv` и установит зависимости.
+   Если `rembg` не установится, всё остальное будет работать, кроме вырезки фона для аватара.
+3. Выполните `flutter pub get` в корне проекта.
+
+## Каждый запуск
+
+1. Откройте `KAGGLE/FitMe_FASHN_VTON_Kaggle.ipynb` в Kaggle и включите **GPU** и **Internet**, затем нажмите **Run All**.
+2. Скопируйте строку `FITME_AI_URL=https://....trycloudflare.com` в конце вывода.
+3. Подключите телефон по USB и запустите `START_FITME.bat`, вставив туда эту строку.
+   Скрипт проверит Kaggle, запустит бэкенд на порту 8000, сделает `adb reverse` и `flutter run`.
+
+Пока вы пользуетесь приложением, сессия Kaggle должна быть запущена. После перезапуска Kaggle URL меняется.
+
+## Без компьютера (облачный режим)
+
+Бэкенд размещается на бесплатном Hugging Face Space, генерация идёт на бесплатном ZeroGPU,
+а APK собирается с адресом этого Space. Пошаговая инструкция — в [DEPLOY_CLOUD.md](DEPLOY_CLOUD.md).
+
+Бэкенд выбирает провайдер сам (`FITME_AI_PROVIDER=auto`): Kaggle, если его URL задан и он онлайн, иначе Hugging Face Space.
+
+## Другой адрес бэкенда
+
+По умолчанию приложение обращается к `http://127.0.0.1:8000` (через `adb reverse`). Другой адрес можно задать так:
+
+```
+flutter run --dart-define=API_BASE_URL=http://192.168.1.10:8000
+```
+
+## Тесты
+
+```
+flutter test
+```

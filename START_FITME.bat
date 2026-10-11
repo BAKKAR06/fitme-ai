@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
-cd /d D:\Projects\fitme_ai
+cd /d "%~dp0"
 
 title FitMe CLEAN MVP Launcher
 
@@ -16,7 +16,7 @@ echo.
 
 if not exist "backend\.venv\Scripts\python.exe" (
   echo ERROR: backend venv is missing.
-  echo Run INSTALL_CLEAN_MVP.bat first.
+  echo Run backend\setup_backend.bat first.
   pause
   exit /b 1
 )
@@ -36,7 +36,7 @@ for /f "tokens=5" %%P in ('netstat -aon ^| findstr ":8000" ^| findstr "LISTENING
 )
 
 echo Starting FitMe backend...
-start "FitMe Backend" cmd /k "cd /d D:\Projects\fitme_ai\backend && .venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000"
+start "FitMe Backend" /D "%~dp0backend" cmd /k .venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 echo Waiting for backend...
 powershell -NoProfile -Command "$ok=$false; 1..30 | %% { try { $r=Invoke-RestMethod 'http://127.0.0.1:8000/health' -TimeoutSec 2; if($r.status -eq 'online'){ $ok=$true; break } } catch {}; Start-Sleep -Milliseconds 500 }; if(-not $ok){ exit 1 }"

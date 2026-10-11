@@ -1,0 +1,36 @@
+FitMe git push 11.10.2026 18:59:45,15 
+bakkar06	https://github.com/BAKKAR06/fitme-ai.git (fetch)
+bakkar06	https://github.com/BAKKAR06/fitme-ai.git (push)
+origin	https://github.com/Vireyx/fitme-ai.git (fetch)
+origin	https://github.com/Vireyx/fitme-ai.git (push)
+===== branch fitme-cloud-benchmark ===== 
+Already on 'fitme-cloud-benchmark'
+M	.gitignore
+A	BUILD_APK.bat
+A	CHECK_PROJECT.bat
+A	DEPLOY_CLOUD.md
+A	GIT_PUSH.bat
+M	README.md
+M	START_FITME.bat
+M	android/app/src/main/AndroidManifest.xml
+A	backend/Dockerfile
+A	backend/SPACE_README.md
+A	backend/app/hf_space.py
+M	backend/app/main.py
+A	backend/requirements-cutout.txt
+M	backend/requirements.txt
+M	backend/setup_backend.bat
+A	benchmark/FitMe_Model_Benchmark_Kaggle.ipynb
+A	benchmark/README.md
+A	benchmark/bench_spaces.py
+A	benchmark/evaluate.py
+A	benchmark/requirements.txt
+A	benchmark/run_bench.bat
+A	docs/FitMe_AI_Models_GPU_Report_3.docx
+A	docs/trial_grid_2026-10-11.jpg
+A	git_push_log.txt
+M	lib/avatar_2d.dart
+M	lib/main.dart
+M	test/widget_test.dart
+fitme-cloud-benchmark
+===== commit ===== 
