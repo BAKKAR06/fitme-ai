@@ -47,6 +47,11 @@ if torch.cuda.get_device_properties(0).major >= 8:
 print("GPU:", torch.cuda.get_device_name(0))
 print("Loading FASHN VTON 1.5...")
 pipeline = TryOnPipeline(weights_dir=WEIGHTS_DIR, device="cuda")
+# Cards without bfloat16 (Kaggle T4 / P100) would run in float32 (slow); FITME_DTYPE=fp16 tries half.
+if os.getenv("FITME_DTYPE", "").lower() == "fp16" and pipeline.inference_dtype == torch.float32:
+    pipeline.tryon_model.to(dtype=torch.float16)
+    pipeline.inference_dtype = torch.float16
+print("dtype:", pipeline.inference_dtype)
 
 import cv2
 import numpy as np
@@ -80,12 +85,23 @@ def detect_garment_photo_type(garment_rgb):
     return ("model" if share > MODEL_PHOTO_BODY_SHARE else "flat-lay"), share
 
 
-app = FastAPI(title="FitMe FASHN Local GPU", version="1.4-local")
+app = FastAPI(title="FitMe FASHN Local GPU", version="1.6-local")
+# On Kaggle the server is reachable from the internet: then every call needs this key.
+GPU_KEY = os.getenv("FITME_GPU_KEY", "").strip()
+
+
+@app.middleware("http")
+async def require_gpu_key(request, call_next):
+    if GPU_KEY and request.url.path != "/health" and request.headers.get("x-gpu-key", "") != GPU_KEY:
+        return Response(content='{"detail":"bad GPU key"}', status_code=401, media_type="application/json")
+    return await call_next(request)
+
 MAX_RESULTS = 30
 pipeline_lock = threading.Lock()
 jobs_lock = threading.Lock()
 JOBS = {}
 RESULTS = {}
+SEGMENTATIONS = {}  # job_id -> PNG label map of the result
 
 CATEGORY_MAP = {
     "upper_body": "tops",
@@ -97,10 +113,23 @@ CATEGORY_MAP = {
 }
 
 
+def encode_segmentation(image: Image.Image) -> bytes:
+    """Human-parser labels of a picture as an 8-bit PNG of the same size."""
+    seg = parse(np.asarray(image.convert("RGB"))).astype(np.uint8)
+    buf = io.BytesIO()
+    Image.fromarray(seg).save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
 @app.get("/health")
 def health():
     free, total = torch.cuda.mem_get_info()
+    with jobs_lock:
+        busy = sum(1 for j in JOBS.values() if j.get("status") == "processing")
+        waiting = sum(1 for j in JOBS.values() if j.get("status") == "queued")
     return {
+        "jobs_processing": busy,
+        "jobs_queued": waiting,
         "status": "ready",
         "engine": "FASHN VTON 1.5",
         "mode": "async-jobs-local",
@@ -124,6 +153,8 @@ def generate_job(
     seed: int,
     segmentation_free: bool,
     enhance: bool,
+    upscale: bool = True,
+    num_samples: int = 1,
 ):
     try:
         with jobs_lock:
@@ -164,39 +195,63 @@ def generate_job(
                 garment_image=garment,
                 category=mapped,
                 garment_photo_type=photo_type,
-                num_samples=1,
+                num_samples=num_samples,
                 num_timesteps=steps,
                 guidance_scale=cfg,
                 seed=int(seed),
                 segmentation_free=bool(segmentation_free),
             )
 
-            generated = result.images[0]
-            final, media = generated, "image/png"
-            if enhance:
-                try:
-                    final = finish_result(person, box, generated, parse, upscaler)
-                    media = "image/jpeg"
-                except Exception as exc:
-                    print(f"enhance skipped: {type(exc).__name__}: {exc}")
+            sample_seconds = round(time.time() - JOBS[job_id]["started_at"], 2)
+            finals = []
+            for generated in result.images:
+                final, media = generated, "image/png"
+                if enhance:
+                    try:
+                        final = finish_result(person, box, generated, parse, upscaler if upscale else None)
+                        media = "image/jpeg"
+                    except Exception as exc:
+                        print(f"enhance skipped: {type(exc).__name__}: {exc}")
+                finals.append((final, media))
+            final, media = finals[0]
 
-        output = io.BytesIO()
-        if media == "image/jpeg":
-            final.save(output, format="JPEG", quality=94, subsampling=0)
-        else:
-            final.save(output, format="PNG")
+        encoded = []
+        for image, kind in finals:
+            output = io.BytesIO()
+            if kind == "image/jpeg":
+                image.save(output, format="JPEG", quality=94, subsampling=0)
+            else:
+                image.save(output, format="PNG")
+            encoded.append((output.getvalue(), kind))
+
+        # Label map of the finished picture: the backend re-colours garments with it later
+        # without waiting for the GPU again (~0.3 s here, done while the GPU is ours anyway).
+        seg_png = None
+        try:
+            with pipeline_lock:
+                seg_png = encode_segmentation(final)
+        except Exception as exc:
+            print(f"segmentation skipped: {type(exc).__name__}: {exc}")
 
         with jobs_lock:
-            RESULTS[job_id] = (output.getvalue(), media)
+            RESULTS[job_id] = encoded
+            if seg_png is not None:
+                SEGMENTATIONS[job_id] = seg_png
             JOBS[job_id]["enhanced"] = media == "image/jpeg"
             JOBS[job_id]["cropped"] = box is not None
             JOBS[job_id]["output_size"] = list(final.size)
             JOBS[job_id]["status"] = "completed"
             JOBS[job_id]["completed_at"] = time.time()
             JOBS[job_id]["seconds"] = round(time.time() - JOBS[job_id]["started_at"], 2)
+            JOBS[job_id]["generation_seconds"] = sample_seconds
+            JOBS[job_id]["samples"] = len(encoded)
             JOBS[job_id]["peak_vram_gb"] = round(torch.cuda.max_memory_allocated() / 2**30, 2)
             while len(RESULTS) > MAX_RESULTS:  # keep RAM bounded
                 RESULTS.pop(next(iter(RESULTS)))
+            while len(SEGMENTATIONS) > MAX_RESULTS:
+                SEGMENTATIONS.pop(next(iter(SEGMENTATIONS)))
+            while len(JOBS) > 500:  # job states grew forever before v4
+                JOBS.pop(next(iter(JOBS)))
 
     except Exception as exc:
         with jobs_lock:
@@ -217,6 +272,8 @@ async def create_job(
     seed: int = Form(42),
     segmentation_free: bool = Form(True),
     enhance: bool = Form(True),
+    upscale: bool = Form(True),
+    num_samples: int = Form(1),
 ):
     person_bytes = await person_photo.read()
     garment_bytes = await garment_photo.read()
@@ -246,6 +303,8 @@ async def create_job(
             seed,
             segmentation_free,
             enhance,
+            upscale,
+            max(1, min(int(num_samples), 2)),
         ),
         daemon=True,
         name=f"fashn-{job_id}",
@@ -264,7 +323,7 @@ def job_status(job_id: str):
 
 
 @app.get("/jobs/{job_id}/result")
-def job_result(job_id: str):
+def job_result(job_id: str, index: int = 0):
     with jobs_lock:
         job = JOBS.get(job_id)
         if job is None:
@@ -276,8 +335,36 @@ def job_result(job_id: str):
     if not stored:
         raise HTTPException(status_code=404, detail="Result not found")
 
-    data, media = stored
+    if not 0 <= index < len(stored):
+        raise HTTPException(status_code=404, detail="No such sample")
+    data, media = stored[index]
     return Response(content=data, media_type=media)
+
+
+@app.get("/jobs/{job_id}/segmentation")
+def job_segmentation(job_id: str):
+    with jobs_lock:
+        data = SEGMENTATIONS.get(job_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Segmentation not found")
+    return Response(content=data, media_type="image/png")
+
+
+@app.post("/segment")
+async def segment(image: UploadFile = File(...)):
+    """Label map for any picture (re-colouring results made by cloud models or before v4)."""
+    raw = await image.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty image")
+    picture = ImageOps.exif_transpose(Image.open(io.BytesIO(raw))).convert("RGB")
+
+    def run() -> bytes:
+        with pipeline_lock:
+            return encode_segmentation(picture)
+
+    from fastapi.concurrency import run_in_threadpool
+
+    return Response(content=await run_in_threadpool(run), media_type="image/png")
 
 
 # Short sync route kept only for quick manual tests.

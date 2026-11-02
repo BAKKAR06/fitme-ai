@@ -1,0 +1,12 @@
+==== askpass free.pinggy.io
+    Warning: Permanently added '[free.pinggy.io]:443' (RSA) to the list of known hosts.
+    Allocated port 4 for remote forward to 127.0.0.1:8000
+    You are not authenticated.
+    Your tunnel will expire in 60 minutes. Upgrade to Pinggy Pro to get unrestricted tunnels. https://dashboard.pinggy.io
+    https://auebi-82-200-168-84.free.pinggy.net
+    https://gzseh-82-200-168-84.run.pinggy-free.link
+==== auth none a.pinggy.io
+    Warning: Permanently added '[a.pinggy.io]:443' (RSA) to the list of known hosts.
+    karab@a.pinggy.io: Permission denied (publickey,password).
+==== askpass localhost.run:443
+    Connection closed by 35.171.254.69 port 443

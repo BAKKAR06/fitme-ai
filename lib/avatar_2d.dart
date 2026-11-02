@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -10,74 +9,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'api.dart';
 import 'common.dart';
-
-class AvatarBodyProfile {
-  AvatarBodyProfile._();
-
-  static final AvatarBodyProfile current = AvatarBodyProfile._();
-
-  double _height = 178;
-  double _weight = 74;
-  double _chest = 96;
-  double _waist = 81;
-  double _hips = 94;
-
-  double get height => _height;
-  double get weight => _weight;
-  double get chest => _chest;
-  double get waist => _waist;
-  double get hips => _hips;
-
-  set height(double v) => _set(() => _height = v);
-  set weight(double v) => _set(() => _weight = v);
-  set chest(double v) => _set(() => _chest = v);
-  set waist(double v) => _set(() => _waist = v);
-  set hips(double v) => _set(() => _hips = v);
-
-  void _set(void Function() change) {
-    change();
-    if (identical(this, current)) {
-      SettingsStore.set('body', {
-        'height': _height,
-        'weight': _weight,
-        'chest': _chest,
-        'waist': _waist,
-        'hips': _hips,
-      });
-    }
-  }
-
-  /// Restores measurements saved by a previous app run.
-  static void loadSaved() {
-    final saved = SettingsStore.get<Map<String, dynamic>>('body');
-    if (saved == null) return;
-    double read(String key, double fallback, double min, double max) {
-      final value = saved[key];
-      return value is num ? value.toDouble().clamp(min, max) : fallback;
-    }
-
-    current._height = read('height', 178, 145, 210);
-    current._weight = read('weight', 74, 40, 140);
-    current._chest = read('chest', 96, 70, 140);
-    current._waist = read('waist', 81, 55, 130);
-    current._hips = read('hips', 94, 70, 150);
-  }
-
-  AvatarBodyProfile snapshot() {
-    final p = AvatarBodyProfile._();
-    p._height = _height;
-    p._weight = _weight;
-    p._chest = _chest;
-    p._waist = _waist;
-    p._hips = _hips;
-    return p;
-  }
-
-  String get signature =>
-      '${height.toStringAsFixed(1)}-${weight.toStringAsFixed(1)}-'
-      '${chest.toStringAsFixed(1)}-${waist.toStringAsFixed(1)}-'
-      '${hips.toStringAsFixed(1)}';
-}
+import 'i18n.dart';
 
 class AvatarPhotoStore {
   AvatarPhotoStore._();
@@ -85,11 +17,27 @@ class AvatarPhotoStore {
 
   static String? _cachedOriginalPath;
   static String? _cachedPreviewPath;
+  static String? _cachedFor;
   static String? lastCutoutError;
 
   /// Bumped every time the avatar files are rewritten. The file names never
   /// change, so widgets use this in their keys to show the new picture.
   static int revision = 0;
+
+  /// Every account on this phone has its own avatar files (a new user must not see someone else's photo).
+  static String get _account {
+    final id = Session.user.value?.id ?? 'guest';
+    return id.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+  }
+
+  static void _checkAccount() {
+    if (_cachedFor != _account) {
+      _cachedFor = _account;
+      _cachedOriginalPath = null;
+      _cachedPreviewPath = null;
+      revision++;
+    }
+  }
 
   static Future<void> _forgetCachedImages(Iterable<File> files) async {
     for (final file in files) {
@@ -99,50 +47,58 @@ class AvatarPhotoStore {
 
   static Future<Directory> _dir() => getApplicationDocumentsDirectory();
 
-  static Future<File> _legacyFile() async {
+  static Future<File> _file(String name) async {
     final dir = await _dir();
-    return File('${dir.path}${Platform.pathSeparator}fitme_2d_avatar.jpg');
+    return File('${dir.path}${Platform.pathSeparator}$name');
   }
 
-  static Future<File> _originalFile() async {
-    final dir = await _dir();
-    return File(
-      '${dir.path}${Platform.pathSeparator}fitme_avatar_original.png',
-    );
-  }
+  static Future<File> _originalFile() => _file('fitme_avatar_original_$_account.png');
 
-  static Future<File> _previewFile() async {
-    final dir = await _dir();
-    return File('${dir.path}${Platform.pathSeparator}fitme_avatar_cutout.png');
+  static Future<File> _previewFile() => _file('fitme_avatar_cutout_$_account.png');
+
+  /// Before v5 the avatar had one name for the whole phone. Those files belonged to the
+  /// creator (the only user then): they move to the creator's account, nobody else sees them.
+  static Future<void> _claimSharedFiles() async {
+    final shared = [
+      (await _file('fitme_avatar_original.png'), await _originalFile()),
+      (await _file('fitme_avatar_cutout.png'), await _previewFile()),
+      (await _file('fitme_2d_avatar.jpg'), await _originalFile()),
+    ];
+    final isOwner = Session.user.value?.role == 'owner';
+    for (final (old, target) in shared) {
+      if (!await old.exists()) continue;
+      if (isOwner && !await target.exists()) {
+        await old.rename(target.path);
+      } else if (isOwner) {
+        await old.delete();
+      }
+    }
   }
 
   static Future<String?> loadPath() async {
+    _checkAccount();
     if (_cachedOriginalPath != null &&
         await File(_cachedOriginalPath!).exists()) {
       return _cachedOriginalPath;
     }
 
+    await _claimSharedFiles();
     final original = await _originalFile();
     if (await original.exists()) {
       _cachedOriginalPath = original.path;
       return _cachedOriginalPath;
     }
-
-    final legacy = await _legacyFile();
-    if (await legacy.exists()) {
-      _cachedOriginalPath = legacy.path;
-      return _cachedOriginalPath;
-    }
-
     return null;
   }
 
   static Future<String?> loadPreviewPath() async {
+    _checkAccount();
     if (_cachedPreviewPath != null &&
         await File(_cachedPreviewPath!).exists()) {
       return _cachedPreviewPath;
     }
 
+    await _claimSharedFiles();
     final preview = await _previewFile();
     if (await preview.exists()) {
       _cachedPreviewPath = preview.path;
@@ -176,11 +132,6 @@ class AvatarPhotoStore {
     await original.writeAsBytes(normalizedPng, flush: true);
     await preview.writeAsBytes(previewPng, flush: true);
 
-    final legacy = await _legacyFile();
-    if (await legacy.exists()) {
-      await legacy.delete();
-    }
-
     await _forgetCachedImages([original, preview]);
     revision++;
     _cachedOriginalPath = original.path;
@@ -202,7 +153,7 @@ class AvatarPhotoStore {
       ),
     );
 
-    final streamed = await request.send().timeout(const Duration(minutes: 3));
+    final streamed = await request.send().timeout(Duration(minutes: 3));
     final response = await http.Response.fromStream(streamed);
     if (response.statusCode != 200) {
       throw Exception(
@@ -219,7 +170,6 @@ class AvatarPhotoStore {
     for (final file in [
       await _originalFile(),
       await _previewFile(),
-      await _legacyFile(),
     ]) {
       if (await file.exists()) {
         await file.delete();
@@ -275,27 +225,26 @@ class _Avatar2DPreviewState extends State<Avatar2DPreview> {
       height: widget.height,
       width: double.infinity,
       decoration: BoxDecoration(
-        color: const Color(0xFF111217),
+        color: FitColors.cardHigh,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white10),
+        border: Border.all(color: FitColors.line),
       ),
       clipBehavior: Clip.antiAlias,
       child: loading
-          ? const Center(child: CircularProgressIndicator())
+          ? Center(child: CircularProgressIndicator())
           : path == null
-          ? const _EmptyAvatarPreview()
+          ? _EmptyAvatarPreview()
           : Stack(
               fit: StackFit.expand,
               children: [
-                BodyWarpImage(
+                AvatarImage(
                   key: ValueKey('preview-${AvatarPhotoStore.revision}'),
                   path: path!,
-                  profile: AvatarBodyProfile.current.snapshot(),
                 ),
-                const Positioned(
+                Positioned(
                   left: 12,
                   bottom: 12,
-                  child: _AvatarBadge(text: 'LIVE 2D • CUTOUT'),
+                  child: _AvatarBadge(text: 'AI CUTOUT'),
                 ),
               ],
             ),
@@ -303,170 +252,29 @@ class _Avatar2DPreviewState extends State<Avatar2DPreview> {
   }
 }
 
-class BodyWarpImage extends StatefulWidget {
-  const BodyWarpImage({super.key, required this.path, required this.profile});
+/// The avatar photo as it is (no stretching: body measurements are not used any more).
+class AvatarImage extends StatelessWidget {
+  const AvatarImage({super.key, required this.path});
 
   final String path;
-  final AvatarBodyProfile profile;
-
-  @override
-  State<BodyWarpImage> createState() => _BodyWarpImageState();
-}
-
-class _BodyWarpImageState extends State<BodyWarpImage> {
-  ui.Image? image;
-  String? loadedPath;
-
-  @override
-  void initState() {
-    super.initState();
-    _decode();
-  }
-
-  @override
-  void didUpdateWidget(covariant BodyWarpImage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.path != widget.path) _decode();
-  }
-
-  Future<void> _decode() async {
-    final bytes = await File(widget.path).readAsBytes();
-    final codec = await ui.instantiateImageCodec(bytes);
-    final frame = await codec.getNextFrame();
-    if (!mounted) return;
-    setState(() {
-      image = frame.image;
-      loadedPath = widget.path;
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
-    if (image == null || loadedPath != widget.path) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    return CustomPaint(
-      painter: _PhotoBodyWarpPainter(image: image!, profile: widget.profile),
-      size: Size.infinite,
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      child: Image.file(
+        File(path),
+        fit: BoxFit.contain,
+        alignment: Alignment.bottomCenter,
+        gaplessPlayback: true,
+        errorBuilder: (_, _, _) => const _EmptyAvatarPreview(),
+      ),
     );
-  }
-}
-
-class _PhotoBodyWarpPainter extends CustomPainter {
-  _PhotoBodyWarpPainter({required this.image, required this.profile});
-
-  final ui.Image image;
-  final AvatarBodyProfile profile;
-
-  double _c(double v, double a, double b) => v.clamp(a, b).toDouble();
-  double _lerp(double a, double b, double t) => a + (b - a) * t;
-
-  double _widthFactor(double y) {
-    final weight = _c(
-      math.pow(profile.weight / 74.0, 0.14).toDouble(),
-      0.92,
-      1.12,
-    );
-    final chest = _c(
-      weight * math.pow(profile.chest / 96.0, 0.34).toDouble(),
-      0.88,
-      1.16,
-    );
-    final waist = _c(
-      weight * math.pow(profile.waist / 81.0, 0.38).toDouble(),
-      0.86,
-      1.18,
-    );
-    final hips = _c(
-      weight * math.pow(profile.hips / 94.0, 0.36).toDouble(),
-      0.88,
-      1.18,
-    );
-    final legs = _c(
-      1.0 + (weight - 1.0) * 0.55 + (hips - 1.0) * 0.22,
-      0.92,
-      1.12,
-    );
-
-    const ys = <double>[0, .16, .30, .45, .60, .78, 1];
-    final fs = <double>[1, 1, chest, waist, hips, legs, legs * .96];
-
-    for (var i = 0; i < ys.length - 1; i++) {
-      if (y >= ys[i] && y <= ys[i + 1]) {
-        final t = (y - ys[i]) / (ys[i + 1] - ys[i]);
-        return _lerp(fs[i], fs[i + 1], t);
-      }
-    }
-    return fs.last;
-  }
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final srcW = image.width.toDouble();
-    final srcH = image.height.toDouble();
-    final heightFactor = _c(profile.height / 178.0, 0.86, 1.14);
-    final drawHeight = size.height * .80 * heightFactor;
-    final baseWidth = drawHeight * (srcW / srcH);
-    final top = (size.height - drawHeight) / 2;
-    final cx = size.width / 2;
-
-    final shadowPath = Path()
-      ..addOval(
-        Rect.fromCenter(
-          center: Offset(cx, size.height - 16),
-          width: baseWidth * .58,
-          height: 12,
-        ),
-      );
-    canvas.drawShadow(shadowPath, Colors.black, 12, false);
-
-    const bands = 72;
-    final srcBand = srcH / bands;
-    final dstBand = drawHeight / bands + 1;
-
-    for (var i = 0; i < bands; i++) {
-      final y = (i + .5) / bands;
-      final factor = _widthFactor(y);
-      final src = Rect.fromLTWH(0, i * srcBand, srcW, srcBand + .8);
-      final w = baseWidth * factor;
-      final dst = Rect.fromLTWH(
-        cx - w / 2,
-        top + i * drawHeight / bands,
-        w,
-        dstBand,
-      );
-      canvas.drawImageRect(
-        image,
-        src,
-        dst,
-        Paint()..filterQuality = FilterQuality.medium,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _PhotoBodyWarpPainter oldDelegate) {
-    return oldDelegate.image != image ||
-        oldDelegate.profile.signature != profile.signature;
   }
 }
 
 class Avatar2DScreen extends StatefulWidget {
-  const Avatar2DScreen({
-    super.key,
-    this.initialHeight,
-    this.initialWeight,
-    this.initialChest,
-    this.initialWaist,
-    this.initialHips,
-  });
-
-  final double? initialHeight;
-  final double? initialWeight;
-  final double? initialChest;
-  final double? initialWaist;
-  final double? initialHips;
+  const Avatar2DScreen({super.key});
 
   @override
   State<Avatar2DScreen> createState() => _Avatar2DScreenState();
@@ -479,22 +287,9 @@ class _Avatar2DScreenState extends State<Avatar2DScreen> {
   bool loading = true;
   bool picking = false;
 
-  late double height;
-  late double weight;
-  late double chest;
-  late double waist;
-  late double hips;
-
   @override
   void initState() {
     super.initState();
-    final p = AvatarBodyProfile.current;
-    height = widget.initialHeight ?? p.height;
-    weight = widget.initialWeight ?? p.weight;
-    chest = widget.initialChest ?? p.chest;
-    waist = widget.initialWaist ?? p.waist;
-    hips = widget.initialHips ?? p.hips;
-    _save();
     _loadAvatar();
   }
 
@@ -504,22 +299,6 @@ class _Avatar2DScreenState extends State<Avatar2DScreen> {
     setState(() {
       avatarPath = path;
       loading = false;
-    });
-  }
-
-  void _save() {
-    final p = AvatarBodyProfile.current;
-    p.height = height;
-    p.weight = weight;
-    p.chest = chest;
-    p.waist = waist;
-    p.hips = hips;
-  }
-
-  void _change(VoidCallback fn) {
-    setState(() {
-      fn();
-      _save();
     });
   }
 
@@ -540,7 +319,7 @@ class _Avatar2DScreenState extends State<Avatar2DScreen> {
       if (!mounted) return;
       setState(() => avatarPath = saved);
     } catch (e) {
-      if (mounted) showMessage(context, 'Не удалось сохранить фото: $e');
+      if (mounted) showMessage(context, t('Не удалось сохранить фото: {e}', {'e': e}));
     } finally {
       if (mounted) {
         setState(() {
@@ -554,13 +333,13 @@ class _Avatar2DScreenState extends State<Avatar2DScreen> {
     if (AvatarPhotoStore.lastCutoutError != null) {
       showMessage(
         context,
-        'Фото сохранено, но фон не удалён: нет связи с ноутбуком. Попробуйте ещё раз позже.',
+        t('Фото сохранено, но фон не удалён: нет связи с ноутбуком. Попробуйте ещё раз позже.'),
       );
     }
   }
 
   Future<void> _deleteAvatar() async {
-    final ok = await confirmAction(context, title: 'Удалить аватар?');
+    final ok = await confirmAction(context, title: t('Удалить аватар?'));
     if (!ok) return;
     await AvatarPhotoStore.delete();
     if (!mounted) return;
@@ -569,46 +348,40 @@ class _Avatar2DScreenState extends State<Avatar2DScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final live = AvatarBodyProfile.current.snapshot();
-
     return Scaffold(
       appBar: AppBar(
-        title: const Text('2D-аватар'),
+        title: Text(t('Мой аватар')),
         actions: [
           TextButton(
-            onPressed: () {
-              _save();
-              Navigator.pop(context);
-            },
-            child: const Text('Готово'),
+            onPressed: () => Navigator.pop(context),
+            child: Text(t('Готово')),
           ),
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 10, 20, 32),
+        padding: EdgeInsets.fromLTRB(20, 10, 20, 32),
         children: [
           Container(
             height: 470,
             decoration: BoxDecoration(
-              color: const Color(0xFF111217),
+              color: FitColors.cardHigh,
               borderRadius: BorderRadius.circular(28),
-              border: Border.all(color: Colors.white10),
+              border: Border.all(color: FitColors.line),
             ),
             clipBehavior: Clip.antiAlias,
             child: loading
-                ? const Center(child: CircularProgressIndicator())
+                ? Center(child: CircularProgressIndicator())
                 : avatarPath == null
-                ? const _CreateAvatarHint()
+                ? _CreateAvatarHint()
                 : Stack(
                     fit: StackFit.expand,
                     children: [
-                      BodyWarpImage(
+                      AvatarImage(
                         key: ValueKey('avatar-${AvatarPhotoStore.revision}'),
                         path: avatarPath!,
-                        profile: live,
                       ),
                       if (picking)
-                        const ColoredBox(
+                        ColoredBox(
                           color: Color(0x99000000),
                           child: Center(
                             child: Column(
@@ -616,31 +389,31 @@ class _Avatar2DScreenState extends State<Avatar2DScreen> {
                               children: [
                                 CircularProgressIndicator(),
                                 SizedBox(height: 12),
-                                Text('AI убирает фон...'),
+                                Text(t('AI убирает фон...'), style: const TextStyle(color: Colors.white)),
                               ],
                             ),
                           ),
                         ),
-                      const Positioned(
+                      Positioned(
                         left: 14,
                         bottom: 14,
-                        child: _AvatarBadge(text: 'LIVE 2D • AI CUTOUT'),
+                        child: _AvatarBadge(text: 'AI CUTOUT'),
                       ),
                     ],
                   ),
           ),
-          const SizedBox(height: 14),
+          SizedBox(height: 14),
           if (avatarPath == null) ...[
             FilledButton.icon(
               onPressed: picking ? null : () => _pick(ImageSource.camera),
-              icon: const Icon(Icons.camera_alt),
-              label: const Text('Сфотографироваться'),
+              icon: Icon(Icons.camera_alt),
+              label: Text(t('Сфотографироваться')),
             ),
-            const SizedBox(height: 10),
+            SizedBox(height: 10),
             OutlinedButton.icon(
               onPressed: picking ? null : () => _pick(ImageSource.gallery),
-              icon: const Icon(Icons.photo_library_outlined),
-              label: const Text('Добавить фото из галереи'),
+              icon: Icon(Icons.photo_library_outlined),
+              label: Text(t('Добавить фото из галереи')),
             ),
           ] else ...[
             Row(
@@ -648,133 +421,40 @@ class _Avatar2DScreenState extends State<Avatar2DScreen> {
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: picking ? null : () => _pick(ImageSource.camera),
-                    icon: const Icon(Icons.camera_alt_outlined),
-                    label: const Text('Новое фото'),
+                    icon: Icon(Icons.camera_alt_outlined),
+                    label: Text(t('Новое фото')),
                   ),
                 ),
-                const SizedBox(width: 10),
+                SizedBox(width: 10),
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: picking ? null : () => _pick(ImageSource.gallery),
-                    icon: const Icon(Icons.photo_library_outlined),
-                    label: const Text('Галерея'),
+                    icon: Icon(Icons.photo_library_outlined),
+                    label: Text(t('Галерея')),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: 8),
             TextButton.icon(
               onPressed: _deleteAvatar,
-              icon: const Icon(Icons.delete_outline),
-              label: const Text('Удалить аватар'),
+              icon: Icon(Icons.delete_outline),
+              label: Text(t('Удалить аватар')),
             ),
           ],
-          const SizedBox(height: 14),
+          SizedBox(height: 14),
           Container(
-            padding: const EdgeInsets.all(15),
+            padding: EdgeInsets.all(15),
             decoration: BoxDecoration(
-              color: const Color(0xFF17181E),
+              color: FitColors.card,
               borderRadius: BorderRadius.circular(18),
             ),
-            child: const Text(
-              'Теперь фон удаляет отдельная AI-модель сегментации человека, а не цветовой фильтр. '
-              'Ползунки меняют именно силуэт человека: рост — высоту, вес — общую ширину, '
-              'грудь / талия / бёдра — свои зоны. Лучше всего работает на фото в полный рост '
-              'с хорошим освещением и простым фоном.',
-              style: TextStyle(color: Colors.white70, height: 1.4),
+            child: Text(
+              t('Аватар — ваше фото в полный рост без фона. Его можно выбрать на вкладке «Примерка» '
+                  'кнопкой «Аватар», чтобы не искать фото каждый раз. Лучше всего подходит снимок '
+                  'при хорошем свете, лицом к камере, на простом фоне.'),
+              style: TextStyle(color: FitColors.soft, height: 1.4),
             ),
-          ),
-          const SizedBox(height: 22),
-          Text(
-            'Параметры тела',
-            style: Theme.of(context).textTheme.titleLarge
-                ?.copyWith(fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 16),
-          _ProfileSlider(
-            label: 'Рост',
-            value: height,
-            min: 145,
-            max: 210,
-            unit: 'см',
-            onChanged: (v) => _change(() => height = v),
-          ),
-          _ProfileSlider(
-            label: 'Вес',
-            value: weight,
-            min: 40,
-            max: 140,
-            unit: 'кг',
-            onChanged: (v) => _change(() => weight = v),
-          ),
-          _ProfileSlider(
-            label: 'Грудь',
-            value: chest,
-            min: 70,
-            max: 140,
-            unit: 'см',
-            onChanged: (v) => _change(() => chest = v),
-          ),
-          _ProfileSlider(
-            label: 'Талия',
-            value: waist,
-            min: 55,
-            max: 130,
-            unit: 'см',
-            onChanged: (v) => _change(() => waist = v),
-          ),
-          _ProfileSlider(
-            label: 'Бёдра',
-            value: hips,
-            min: 70,
-            max: 150,
-            unit: 'см',
-            onChanged: (v) => _change(() => hips = v),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ProfileSlider extends StatelessWidget {
-  const _ProfileSlider({
-    required this.label,
-    required this.value,
-    required this.min,
-    required this.max,
-    required this.unit,
-    required this.onChanged,
-  });
-
-  final String label;
-  final double value;
-  final double min;
-  final double max;
-  final String unit;
-  final ValueChanged<double> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Text(label),
-              const Spacer(),
-              Text(
-                '${value.round()} $unit',
-                style: const TextStyle(fontWeight: FontWeight.w800),
-              ),
-            ],
-          ),
-          Slider(
-            value: value.clamp(min, max).toDouble(),
-            min: min,
-            max: max,
-            onChanged: onChanged,
           ),
         ],
       ),
@@ -787,20 +467,20 @@ class _EmptyAvatarPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.person_add_alt_1, size: 58, color: Color(0xFFB9AEFF)),
+          Icon(Icons.person_add_alt_1, size: 58, color: FitColors.accentSoft),
           SizedBox(height: 10),
           Text(
-            'Создай 2D-аватар из своего фото',
+            t('Создайте аватар из своего фото'),
             style: TextStyle(fontWeight: FontWeight.w800),
           ),
           SizedBox(height: 4),
           Text(
-            'AI удалит фон автоматически',
-            style: TextStyle(color: Colors.white54),
+            t('AI удалит фон автоматически'),
+            style: TextStyle(color: FitColors.muted),
           ),
         ],
       ),
@@ -813,24 +493,24 @@ class _CreateAvatarHint extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Padding(
+    return Padding(
       padding: EdgeInsets.all(30),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.accessibility_new, size: 78, color: Color(0xFFB9AEFF)),
+          Icon(Icons.accessibility_new, size: 78, color: FitColors.accentSoft),
           SizedBox(height: 18),
           Text(
-            'Создай свой 2D-аватар',
+            t('Создайте свой аватар'),
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
           ),
           SizedBox(height: 8),
           Text(
-            'Сфотографируйся в полный рост или выбери готовое фото. '
-            'FitMe уберёт фон и оставит только человека.',
+            t('Сфотографируйтесь в полный рост или выберите готовое фото. '
+            'FitMe уберёт фон и оставит только человека.'),
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white60, height: 1.4),
+            style: TextStyle(color: FitColors.muted, height: 1.4),
           ),
         ],
       ),
@@ -846,16 +526,16 @@ class _AvatarBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.65),
         borderRadius: BorderRadius.circular(99),
-        border: Border.all(color: const Color(0x66B9AEFF)),
+        border: Border.all(color: FitColors.accentSoft.withValues(alpha: .4)),
       ),
       child: Text(
         text,
-        style: const TextStyle(
-          color: Color(0xFFB9AEFF),
+        style: TextStyle(
+          color: const Color(0xFFB9AEFF),
           fontSize: 10,
           fontWeight: FontWeight.w900,
         ),

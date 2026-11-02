@@ -3,3 +3,6 @@ uvicorn[standard]==0.35.0
 python-multipart==0.0.20
 httpx==0.28.1
 pillow>=10.4.0
+numpy>=1.26
+psutil>=5.9
+firebase-admin>=6.5

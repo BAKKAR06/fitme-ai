@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'api.dart';
 import 'common.dart';
+import 'i18n.dart';
 
 class LooksScreen extends StatefulWidget {
   const LooksScreen({super.key});
@@ -44,7 +45,7 @@ class _LooksScreenState extends State<LooksScreen> {
     if (id.isEmpty) return;
     final ok = await confirmAction(
       context,
-      title: 'Удалить образ?',
+      title: t('Удалить образ?'),
       message: look['title']?.toString(),
     );
     if (!ok || !mounted) return;
@@ -53,7 +54,7 @@ class _LooksScreenState extends State<LooksScreen> {
       await _load();
     } catch (e) {
       if (!mounted) return;
-      showMessage(context, 'Не удалось удалить: $e');
+      showMessage(context, t('Не удалось удалить: {e}', {'e': e}));
     }
   }
 
@@ -67,7 +68,7 @@ class _LooksScreenState extends State<LooksScreen> {
   void _open(Map<String, dynamic> look) {
     final url = look['result_url']?.toString();
     if (url == null || url.isEmpty) return;
-    final items = (look['items'] as List<dynamic>? ?? const [])
+    final items = (look['items'] as List<dynamic>? ?? [])
         .whereType<Map<String, dynamic>>()
         .toList();
     final sourceUrl = look['source_url']?.toString() ?? '';
@@ -76,7 +77,7 @@ class _LooksScreenState extends State<LooksScreen> {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => Scaffold(
-          appBar: AppBar(title: Text(look['title']?.toString() ?? 'Образ')),
+          appBar: AppBar(title: Text(look['title']?.toString() ?? t('Образ'))),
           body: SafeArea(
             child: Column(
               children: [
@@ -93,7 +94,7 @@ class _LooksScreenState extends State<LooksScreen> {
                 ),
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+                  padding: EdgeInsets.fromLTRB(18, 14, 18, 18),
                   color: FitColors.card,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -106,18 +107,20 @@ class _LooksScreenState extends State<LooksScreen> {
                             Chip(label: Text(item['label']?.toString() ?? '')),
                           if ((look['engine']?.toString() ?? '').isNotEmpty)
                             Chip(
-                              avatar: const Icon(Icons.auto_awesome, size: 16),
+                              avatar: Icon(Icons.auto_awesome, size: 16),
                               label: Text(
                                 look['num_timesteps'] == null
                                     ? look['engine'].toString()
-                                    : '${look['engine']} • ${look['num_timesteps']} шагов',
+                                    : '${look['engine']} • ${t('{n} шагов', {'n': look['num_timesteps']})}',
                               ),
                             ),
-                          for (final key in const ['gender', 'size', 'fit', 'color'])
+                          for (final key in ['size', 'fit', 'color'])
                             if ((look[key]?.toString() ?? '').isNotEmpty)
                               Chip(
                                 label: Text(
-                                  key == 'size' ? 'Размер ${look[key]}' : look[key].toString(),
+                                  key == 'size'
+                                      ? t('Размер {s}', {'s': look[key]})
+                                      : t(look[key].toString()),
                                 ),
                               ),
                         ],
@@ -125,8 +128,8 @@ class _LooksScreenState extends State<LooksScreen> {
                       if (sourceUrl.isNotEmpty)
                         TextButton.icon(
                           onPressed: () => openProductSource(context, sourceUrl),
-                          icon: const Icon(Icons.open_in_new),
-                          label: Text(sourceName.isEmpty ? 'Открыть товар' : sourceName),
+                          icon: Icon(Icons.open_in_new),
+                          label: Text(sourceName.isEmpty ? t('Открыть товар') : sourceName),
                         ),
                     ],
                   ),
@@ -144,21 +147,21 @@ class _LooksScreenState extends State<LooksScreen> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+        padding: EdgeInsets.fromLTRB(20, 18, 20, 24),
         children: [
           ScreenTitle(
-            'Мои луки',
-            subtitle: 'Сохранённые результаты примерок',
+            t('Мои луки'),
+            subtitle: t('Сохранённые результаты примерок'),
             trailing: IconButton(
               onPressed: () {
                 setState(() => loading = true);
                 _load();
               },
-              icon: const Icon(Icons.refresh),
+              icon: Icon(Icons.refresh),
             ),
           ),
           if (loading)
-            const Padding(
+            Padding(
               padding: EdgeInsets.only(top: 120),
               child: Center(child: CircularProgressIndicator()),
             )
@@ -166,34 +169,39 @@ class _LooksScreenState extends State<LooksScreen> {
             SectionCard(
               child: Column(
                 children: [
-                  Text(error!, style: const TextStyle(color: FitColors.danger)),
-                  const SizedBox(height: 10),
+                  Text(error!, style: TextStyle(color: FitColors.danger)),
+                  SizedBox(height: 10),
                   OutlinedButton.icon(
                     onPressed: () {
                       setState(() => loading = true);
                       _load();
                     },
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Повторить'),
+                    icon: Icon(Icons.refresh),
+                    label: Text(t('Повторить')),
                   ),
                 ],
               ),
             )
           else if (looks.isEmpty)
-            const Padding(
+            Padding(
               padding: EdgeInsets.only(top: 110),
               child: Column(
                 children: [
-                  Icon(Icons.favorite_border, size: 80, color: Colors.white38),
+                  Container(
+                    width: 110,
+                    height: 110,
+                    decoration: BoxDecoration(color: FitColors.tint, shape: BoxShape.circle),
+                    child: Icon(Icons.favorite_border, size: 52, color: FitColors.accentSoft),
+                  ),
                   SizedBox(height: 14),
                   Text(
-                    'Пока нет сохранённых луков',
+                    t('Пока нет сохранённых луков'),
                     style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
                   ),
                   SizedBox(height: 6),
                   Text(
-                    'Сделайте примерку и нажмите «Сохранить»',
-                    style: TextStyle(color: Colors.white54),
+                    t('Сделайте примерку и нажмите «Сохранить»'),
+                    style: TextStyle(color: FitColors.muted),
                   ),
                 ],
               ),
@@ -201,9 +209,9 @@ class _LooksScreenState extends State<LooksScreen> {
           else
             GridView.builder(
               shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
+              physics: NeverScrollableScrollPhysics(),
               itemCount: looks.length,
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 2,
                 mainAxisSpacing: 14,
                 crossAxisSpacing: 14,
@@ -217,8 +225,16 @@ class _LooksScreenState extends State<LooksScreen> {
                   clipBehavior: Clip.antiAlias,
                   decoration: BoxDecoration(
                     color: FitColors.card,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Colors.white10),
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(color: FitColors.line),
+                    boxShadow: [
+                      if (!FitColors.dark)
+                        BoxShadow(
+                          color: const Color(0xFF2A2350).withValues(alpha: .07),
+                          blurRadius: 18,
+                          offset: const Offset(0, 6),
+                        ),
+                    ],
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -229,13 +245,13 @@ class _LooksScreenState extends State<LooksScreen> {
                           child: Container(
                             color: Colors.black,
                             child: url == null
-                                ? const SizedBox()
+                                ? SizedBox()
                                 : NetImage(url, fit: BoxFit.cover, alignment: Alignment.topCenter),
                           ),
                         ),
                       ),
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+                        padding: EdgeInsets.fromLTRB(12, 10, 4, 10),
                         child: Row(
                           children: [
                             Expanded(
@@ -243,16 +259,16 @@ class _LooksScreenState extends State<LooksScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    look['title']?.toString() ?? 'Образ',
+                                    look['title']?.toString() ?? t('Образ'),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(fontWeight: FontWeight.w800),
+                                    style: TextStyle(fontWeight: FontWeight.w800),
                                   ),
-                                  const SizedBox(height: 2),
+                                  SizedBox(height: 2),
                                   Text(
-                                    '${itemsCount > 1 ? '$itemsCount вещи • ' : ''}'
+                                    '${itemsCount > 1 ? '${t('{n} вещи', {'n': itemsCount})} • ' : ''}'
                                     '${_date(look['created_at']?.toString())}',
-                                    style: const TextStyle(color: Colors.white54, fontSize: 11),
+                                    style: TextStyle(color: FitColors.muted, fontSize: 11),
                                   ),
                                 ],
                               ),
@@ -260,7 +276,7 @@ class _LooksScreenState extends State<LooksScreen> {
                             IconButton(
                               visualDensity: VisualDensity.compact,
                               onPressed: () => _delete(look),
-                              icon: const Icon(Icons.delete_outline, size: 20),
+                              icon: Icon(Icons.delete_outline, size: 20),
                             ),
                           ],
                         ),

@@ -85,3 +85,8 @@ backend/catalog/
 close_log.txt
 test_output/
 backend/data/hf_token.txt
+bench_avatar_log.txt
+diag_log.txt
+
+# Kaggle notebook with the secret GPU key (made by KAGGLE_GPU.bat)
+KAGGLE_PRIVATE/

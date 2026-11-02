@@ -3,6 +3,7 @@ import 'package:image_picker/image_picker.dart';
 
 import 'api.dart';
 import 'common.dart';
+import 'i18n.dart';
 
 class CatalogScreen extends StatefulWidget {
   const CatalogScreen({super.key, required this.onTryOn});
@@ -19,6 +20,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
   bool loading = true;
   bool working = false;
   String? error;
+  String filter = 'all';
+  String query = '';
   List<CatalogItem> items = const [];
 
   @override
@@ -52,34 +55,34 @@ class _CatalogScreenState extends State<CatalogScreen> {
       showDragHandle: true,
       builder: (sheetContext) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+          padding: EdgeInsets.fromLTRB(16, 0, 16, 18),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Align(
+              Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'Добавить вещь',
+                  t('Добавить вещь'),
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
                 ),
               ),
-              const SizedBox(height: 12),
+              SizedBox(height: 12),
               ListTile(
-                leading: const Icon(Icons.link),
-                title: const Text('По ссылке на товар'),
-                subtitle: const Text('FitMe сам найдёт фото товара'),
+                leading: Icon(Icons.link),
+                title: Text(t('По ссылке на товар')),
+                subtitle: Text(t('FitMe сам найдёт фото товара')),
                 onTap: () => Navigator.pop(sheetContext, 'url'),
               ),
               ListTile(
-                leading: const Icon(Icons.photo_library_outlined),
-                title: const Text('Из галереи'),
-                subtitle: const Text('Выбрать фото одежды'),
+                leading: Icon(Icons.photo_library_outlined),
+                title: Text(t('Из галереи')),
+                subtitle: Text(t('Выбрать фото одежды')),
                 onTap: () => Navigator.pop(sheetContext, 'photo'),
               ),
               ListTile(
-                leading: const Icon(Icons.photo_camera_outlined),
-                title: const Text('Сфотографировать'),
-                subtitle: const Text('Снять вещь камерой'),
+                leading: Icon(Icons.photo_camera_outlined),
+                title: Text(t('Сфотографировать')),
+                subtitle: Text(t('Снять вещь камерой')),
                 onTap: () => Navigator.pop(sheetContext, 'camera'),
               ),
             ],
@@ -107,7 +110,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setLocal) => AlertDialog(
-          title: const Text('Добавить по ссылке'),
+          title: Text(t('Добавить по ссылке')),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -116,13 +119,13 @@ class _CatalogScreenState extends State<CatalogScreen> {
                   controller: urlCtrl,
                   autofocus: true,
                   keyboardType: TextInputType.url,
-                  decoration: const InputDecoration(
-                    labelText: 'Ссылка на товар',
+                  decoration: InputDecoration(
+                    labelText: t('Ссылка на товар'),
                     hintText: 'https://...',
                     prefixIcon: Icon(Icons.link),
                   ),
                 ),
-                const SizedBox(height: 12),
+                SizedBox(height: 12),
                 CompactGarmentTypeField(
                   label: garmentType,
                   enabled: true,
@@ -138,10 +141,10 @@ class _CatalogScreenState extends State<CatalogScreen> {
                     });
                   },
                 ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Если магазин не отдаёт фото, добавьте его вручную из галереи.',
-                  style: TextStyle(color: Colors.white54, fontSize: 12),
+                SizedBox(height: 10),
+                Text(
+                  t('Если магазин не отдаёт фото, добавьте его вручную из галереи.'),
+                  style: TextStyle(color: FitColors.muted, fontSize: 12),
                 ),
               ],
             ),
@@ -149,7 +152,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Отмена'),
+              child: Text(t('Отмена')),
             ),
             FilledButton(
               onPressed: () {
@@ -159,7 +162,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                   'category': category,
                 });
               },
-              child: const Text('Найти фото'),
+              child: Text(t('Найти фото')),
             ),
           ],
         ),
@@ -176,10 +179,10 @@ class _CatalogScreenState extends State<CatalogScreen> {
       );
       await _load();
       if (!mounted) return;
-      showMessage(context, 'Добавлено: ${item.name}');
+      showMessage(context, t('Добавлено: {name}', {'name': item.displayName}));
     } catch (e) {
       if (!mounted) return;
-      showMessage(context, 'Не удалось взять фото по ссылке: $e');
+      showMessage(context, t('Не удалось взять фото по ссылке: {e}', {'e': e}));
     } finally {
       if (mounted) setState(() => working = false);
     }
@@ -203,19 +206,19 @@ class _CatalogScreenState extends State<CatalogScreen> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setLocal) => AlertDialog(
-          title: const Text('Добавить вещь'),
+          title: Text(t('Добавить вещь')),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
                   controller: nameCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Название',
-                    hintText: 'Синие джинсы',
+                  decoration: InputDecoration(
+                    labelText: t('Название'),
+                    hintText: t('Синие джинсы'),
                   ),
                 ),
-                const SizedBox(height: 12),
+                SizedBox(height: 12),
                 CompactGarmentTypeField(
                   label: garmentType,
                   enabled: true,
@@ -231,20 +234,20 @@ class _CatalogScreenState extends State<CatalogScreen> {
                     });
                   },
                 ),
-                const SizedBox(height: 12),
+                SizedBox(height: 12),
                 TextField(
                   controller: sourceNameCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Магазин (необязательно)',
+                  decoration: InputDecoration(
+                    labelText: t('Магазин (необязательно)'),
                     hintText: 'Zara / Wildberries / Kaspi',
                   ),
                 ),
-                const SizedBox(height: 12),
+                SizedBox(height: 12),
                 TextField(
                   controller: sourceUrlCtrl,
                   keyboardType: TextInputType.url,
-                  decoration: const InputDecoration(
-                    labelText: 'Ссылка (необязательно)',
+                  decoration: InputDecoration(
+                    labelText: t('Ссылка (необязательно)'),
                     hintText: 'https://...',
                   ),
                 ),
@@ -254,7 +257,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Отмена'),
+              child: Text(t('Отмена')),
             ),
             FilledButton(
               onPressed: () {
@@ -269,7 +272,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                   'source_url': sourceUrlCtrl.text.trim(),
                 });
               },
-              child: const Text('Добавить'),
+              child: Text(t('Добавить')),
             ),
           ],
         ),
@@ -293,7 +296,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
       await _load();
     } catch (e) {
       if (!mounted) return;
-      showMessage(context, 'Ошибка каталога: $e');
+      showMessage(context, t('Ошибка каталога: {e}', {'e': e}));
     } finally {
       if (mounted) setState(() => working = false);
     }
@@ -302,8 +305,8 @@ class _CatalogScreenState extends State<CatalogScreen> {
   Future<void> _delete(CatalogItem item) async {
     final ok = await confirmAction(
       context,
-      title: 'Удалить «${item.name}»?',
-      message: 'Вещь пропадёт из каталога.',
+      title: t('Удалить «{name}»?', {'name': item.displayName}),
+      message: t('Вещь пропадёт из каталога.'),
     );
     if (!ok || !mounted) return;
     try {
@@ -311,20 +314,31 @@ class _CatalogScreenState extends State<CatalogScreen> {
       await _load();
     } catch (e) {
       if (!mounted) return;
-      showMessage(context, 'Не удалось удалить: $e');
+      showMessage(context, t('Не удалось удалить: {e}', {'e': e}));
     }
+  }
+
+  List<CatalogItem> get _visible {
+    final q = query.trim().toLowerCase();
+    return [
+      for (final item in items)
+        if ((filter == 'all' || item.category == filter) &&
+            (q.isEmpty || item.displayName.toLowerCase().contains(q)))
+          item,
+    ];
   }
 
   @override
   Widget build(BuildContext context) {
+    final visible = _visible;
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
         children: [
           ScreenTitle(
-            'Каталог',
-            subtitle: 'Ваши вещи — добавляйте в образ одним нажатием',
+            t('Каталог'),
+            subtitle: t('Ваши вещи — добавляйте в образ одним нажатием'),
             trailing: working
                 ? const SizedBox(
                     width: 40,
@@ -334,11 +348,48 @@ class _CatalogScreenState extends State<CatalogScreen> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                   )
-                : IconButton.filledTonal(
+                : IconButton.filled(
+                    tooltip: t('Добавить вещь'),
                     onPressed: _addItem,
                     icon: const Icon(Icons.add),
                   ),
           ),
+          if (!loading && error == null && items.isNotEmpty) ...[
+            TextField(
+              onChanged: (v) => setState(() => query = v),
+              decoration: InputDecoration(
+                isDense: true,
+                prefixIcon: const Icon(Icons.search),
+                hintText: t('Поиск по названию'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final (value, label) in const [
+                    ('all', 'Все'),
+                    ('upper_body', 'Верх'),
+                    ('lower_body', 'Низ'),
+                    ('dresses', 'Платья'),
+                  ])
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        showCheckmark: false,
+                        label: Text(
+                          '${t(label)} ${value == 'all' ? items.length : items.where((i) => i.category == value).length}',
+                        ),
+                        selected: filter == value,
+                        onSelected: (_) => setState(() => filter = value),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+          ],
           if (loading)
             const Padding(
               padding: EdgeInsets.only(top: 120),
@@ -348,7 +399,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
             SectionCard(
               child: Column(
                 children: [
-                  Text(error!, style: const TextStyle(color: FitColors.danger)),
+                  Text(error!, style: TextStyle(color: FitColors.danger)),
                   const SizedBox(height: 10),
                   OutlinedButton.icon(
                     onPressed: () {
@@ -356,7 +407,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
                       _load();
                     },
                     icon: const Icon(Icons.refresh),
-                    label: const Text('Повторить'),
+                    label: Text(t('Повторить')),
                   ),
                 ],
               ),
@@ -366,41 +417,53 @@ class _CatalogScreenState extends State<CatalogScreen> {
               padding: const EdgeInsets.only(top: 80),
               child: Column(
                 children: [
-                  const Icon(Icons.checkroom, size: 80, color: Colors.white38),
+                  Container(
+                    width: 110,
+                    height: 110,
+                    decoration: BoxDecoration(color: FitColors.tint, shape: BoxShape.circle),
+                    child: Icon(Icons.checkroom, size: 54, color: FitColors.accentSoft),
+                  ),
                   const SizedBox(height: 18),
-                  const Text(
-                    'Каталог пуст',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+                  Text(
+                    t('Каталог пуст'),
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
                   ),
                   const SizedBox(height: 8),
-                  const Text(
-                    'Нажмите + и добавьте фото одежды.',
-                    style: TextStyle(color: Colors.white60),
+                  Text(
+                    t('Нажмите + и добавьте фото одежды.'),
+                    style: TextStyle(color: FitColors.muted),
                   ),
                   const SizedBox(height: 20),
                   FilledButton.icon(
                     onPressed: _addItem,
                     icon: const Icon(Icons.add),
-                    label: const Text('Добавить вещь'),
+                    label: Text(t('Добавить вещь')),
                   ),
                 ],
+              ),
+            )
+          else if (visible.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 60),
+              child: Center(
+                child: Text(t('Ничего не найдено'), style: TextStyle(color: FitColors.muted)),
               ),
             )
           else
             GridView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              itemCount: items.length,
+              itemCount: visible.length,
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 2,
                 mainAxisSpacing: 14,
                 crossAxisSpacing: 14,
-                childAspectRatio: 0.62,
+                childAspectRatio: 0.6,
               ),
               itemBuilder: (context, index) => _CatalogTile(
-                item: items[index],
-                onTryOn: () => widget.onTryOn(items[index]),
-                onDelete: () => _delete(items[index]),
+                item: visible[index],
+                onTryOn: () => widget.onTryOn(visible[index]),
+                onDelete: () => _delete(visible[index]),
               ),
             ),
         ],
@@ -426,8 +489,16 @@ class _CatalogTile extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: FitColors.card,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white10),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: FitColors.line),
+        boxShadow: [
+          if (!FitColors.dark)
+            BoxShadow(
+              color: const Color(0xFF2A2350).withValues(alpha: .07),
+              blurRadius: 18,
+              offset: const Offset(0, 6),
+            ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -440,50 +511,62 @@ class _CatalogTile extends StatelessWidget {
                   onTap: () => openZoom(
                     context,
                     NetImage(item.imageUrl, fit: BoxFit.contain),
-                    title: item.name,
+                    title: item.displayName,
                   ),
                   child: Container(
                     color: Colors.white,
+                    padding: const EdgeInsets.all(6),
                     child: NetImage(item.imageUrl, fit: BoxFit.contain),
                   ),
                 ),
                 Positioned(
-                  top: 6,
-                  right: 6,
-                  child: IconButton.filledTonal(
+                  top: 8,
+                  left: 8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: .55),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      categoryRu(item.category),
+                      style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: IconButton(
                     visualDensity: VisualDensity.compact,
+                    style: IconButton.styleFrom(backgroundColor: Colors.black.withValues(alpha: .45)),
+                    tooltip: t('Удалить'),
                     onPressed: onDelete,
-                    icon: const Icon(Icons.delete_outline, size: 18),
+                    icon: const Icon(Icons.delete_outline, size: 18, color: Colors.white),
                   ),
                 ),
               ],
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
-            child: Text(
-              item.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+            padding: const EdgeInsets.fromLTRB(12, 10, 8, 2),
             child: Row(
               children: [
-                Text(
-                  categoryRu(item.category),
-                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                Expanded(
+                  child: Text(
+                    item.displayName,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13, height: 1.2),
+                  ),
                 ),
-                const Spacer(),
                 if (item.sourceUrl.isNotEmpty)
                   InkWell(
                     onTap: () => openProductSource(context, item.sourceUrl),
-                    child: const Icon(
-                      Icons.open_in_new,
-                      size: 16,
-                      color: FitColors.accentSoft,
+                    borderRadius: BorderRadius.circular(12),
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Icon(Icons.open_in_new, size: 16, color: FitColors.accentSoft),
                     ),
                   ),
               ],
@@ -492,9 +575,10 @@ class _CatalogTile extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
             child: FilledButton.icon(
+              style: FilledButton.styleFrom(minimumSize: const Size(0, 40)),
               onPressed: onTryOn,
               icon: const Icon(Icons.add, size: 18),
-              label: const Text('В образ'),
+              label: Text(t('В образ')),
             ),
           ),
         ],

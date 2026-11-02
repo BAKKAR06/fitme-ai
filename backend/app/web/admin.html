@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FitMe Admin</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f5f4fa; --card: #ffffff; --card2: #f0eef8; --line: #e3e0ef;
+  --text: #17142a; --soft: #4b4763; --muted: #7d7896;
+  --accent: #7c5cff; --accent-soft: #5b3fe0;
+  --ok: #18865a; --warn: #b26b00; --danger: #c8333a;
+  --series-1: #2a78d6; --series-2: #eb6834;
+  --grid: #ebe9f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --bg: #0f0d18; --card: #191626; --card2: #221e33; --line: #2c2742;
+    --text: #f1eefc; --soft: #c9c3e3; --muted: #8f88b0;
+    --accent: #8b6cff; --accent-soft: #b9a6ff;
+    --ok: #3ccf8e; --warn: #f0b03c; --danger: #ff6b6b;
+    --series-1: #3987e5; --series-2: #d95926; --grid: #2a2540;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f0d18; --card: #191626; --card2: #221e33; --line: #2c2742;
+  --text: #f1eefc; --soft: #c9c3e3; --muted: #8f88b0;
+  --accent: #8b6cff; --accent-soft: #b9a6ff;
+  --ok: #3ccf8e; --warn: #f0b03c; --danger: #ff6b6b;
+  --series-1: #3987e5; --series-2: #d95926; --grid: #2a2540;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; }
+header { display: flex; align-items: center; gap: 14px; padding: 14px 24px; border-bottom: 1px solid var(--line);
+  background: var(--card); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+.brand { font-weight: 800; font-size: 19px; letter-spacing: -.2px; }
+.brand b { color: var(--accent); }
+nav { display: flex; gap: 4px; flex-wrap: wrap; }
+nav button { border: 0; background: transparent; color: var(--muted); font: inherit; font-weight: 700;
+  padding: 8px 14px; border-radius: 10px; cursor: pointer; }
+nav button.on { background: var(--card2); color: var(--text); }
+.spacer { flex: 1; }
+.who { color: var(--muted); font-size: 13px; }
+.role { display: inline-block; padding: 2px 9px; border-radius: 20px; font-size: 12px; font-weight: 700;
+  background: var(--card2); color: var(--soft); }
+.role.owner { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent-soft); }
+.role.admin { background: color-mix(in srgb, var(--series-1) 18%, transparent); color: var(--series-1); }
+main { max-width: 1640px; margin: 0 auto; padding: 22px 24px 60px; }
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 16px 18px; }
+.tile .label { color: var(--muted); font-size: 12.5px; font-weight: 600; }
+.tile .value { font-size: 28px; font-weight: 800; letter-spacing: -.5px; margin-top: 2px; }
+.tile .sub { color: var(--muted); font-size: 12.5px; }
+h2 { font-size: 17px; margin: 26px 0 10px; }
+h3 { font-size: 15px; margin: 0 0 10px; }
+.two { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; align-items: start; }
+@media (max-width: 860px) { .two { grid-template-columns: 1fr; } main { padding: 16px; } header { padding: 12px 16px; } }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; color: var(--muted); font-weight: 700; font-size: 12px; padding: 8px 10px;
+  border-bottom: 1px solid var(--line); white-space: nowrap; cursor: pointer; user-select: none; }
+td { padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr:hover td { background: var(--card2); }
+.scroll { overflow-x: auto; }
+.muted { color: var(--muted); }
+.ok { color: var(--ok); } .warn { color: var(--warn); } .danger { color: var(--danger); }
+input, select { font: inherit; color: var(--text); background: var(--card2); border: 1px solid var(--line);
+  border-radius: 10px; padding: 8px 12px; }
+button.btn { font: inherit; font-weight: 700; border-radius: 10px; padding: 8px 14px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--card2); color: var(--text); }
+button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.btn.small { padding: 4px 9px; font-size: 12px; }
+button.btn.danger { color: var(--danger); }
+.toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+#login { max-width: 380px; margin: 10vh auto; }
+#login .card { padding: 26px; }
+#login input { width: 100%; margin-bottom: 10px; }
+.err { color: var(--danger); min-height: 20px; font-size: 13px; }
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; height: 190px; overflow: visible; }
+.legend { display: flex; gap: 14px; font-size: 12.5px; color: var(--soft); margin-top: 6px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.tip { position: absolute; pointer-events: none; background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 7px 10px; font-size: 12.5px; box-shadow: 0 6px 20px rgba(0,0,0,.18);
+  white-space: nowrap; display: none; z-index: 3; }
+.cap td.over { color: var(--danger); font-weight: 700; }
+.pill { padding: 2px 8px; border-radius: 20px; font-size: 12px; font-weight: 700; }
+.pill.ok { background: color-mix(in srgb, var(--ok) 16%, transparent); }
+.pill.danger { background: color-mix(in srgb, var(--danger) 16%, transparent); }
+.pill.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); }
+.note { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
+.hidden { display: none !important; }
+code { background: var(--card2); padding: 1px 6px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<div id="login" class="hidden">
+  <div class="card">
+    <div class="brand" style="margin-bottom:6px">FitMe <b>Admin</b></div>
+    <p class="muted" style="margin-top:0">Вход для администратора и создателя</p>
+    <input id="lemail" type="email" placeholder="Почта" autocomplete="username">
+    <input id="lpass" type="password" placeholder="Пароль" autocomplete="current-password">
+    <input id="lkey" type="password" placeholder="Ключ доступа сервера" class="hidden">
+    <div class="err" id="lerr"></div>
+    <button class="btn primary" style="width:100%" id="lgo">Войти</button>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <header>
+    <div class="brand">FitMe <b>Admin</b></div>
+    <nav>
+      <button data-tab="overview" class="on">Обзор</button>
+      <button data-tab="users">Пользователи</button>
+      <button data-tab="jobs">Примерки</button>
+      <button data-tab="settings">Настройки</button>
+    </nav>
+    <div class="spacer"></div>
+    <span class="who" id="who"></span>
+    <button class="btn small" id="theme">Тема</button>
+    <button class="btn small" id="logout">Выйти</button>
+  </header>
+  <main>
+    <section id="tab-overview"></section>
+    <section id="tab-users" class="hidden"></section>
+    <section id="tab-jobs" class="hidden"></section>
+    <section id="tab-settings" class="hidden"></section>
+  </main>
+</div>
+
+<script>
+"use strict";
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} },
+};
+// The tunnel key can come in the link (#key=...) from ADMIN_PANEL.bat.
+(function () {
+  const m = location.hash.match(/key=([^&]+)/);
+  if (m) { store.set("fitme_key", decodeURIComponent(m[1])); history.replaceState(null, "", location.pathname); }
+})();
+let token = store.get("fitme_admin_token");
+let refreshToken = store.get("fitme_admin_refresh");
+let tokenExp = +(store.get("fitme_admin_exp") || 0);
+let fbKey = null;
+let me = null;
+const $ = (s) => document.querySelector(s);
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtTime = (ts) => ts ? new Date(ts * 1000).toLocaleString("ru-RU", {day:"2-digit", month:"2-digit", year:"2-digit", hour:"2-digit", minute:"2-digit"}) : "—";
+const ago = (ts) => {
+  if (!ts) return "—";
+  const s = Date.now() / 1000 - ts;
+  if (s < 90) return "сейчас";
+  if (s < 3600) return Math.round(s / 60) + " мин назад";
+  if (s < 86400) return Math.round(s / 3600) + " ч назад";
+  return Math.round(s / 86400) + " дн назад";
+};
+const num = (v, d = 0) => v == null ? "—" : Number(v).toLocaleString("ru-RU", {maximumFractionDigits: d, minimumFractionDigits: d});
+const roleName = {owner: "создатель", admin: "админ", user: "клиент"};
+
+async function firebaseKey() {
+  if (!fbKey) {
+    const cfg = await fetch("/api/v1/auth/config").then((r) => r.json());
+    fbKey = cfg.firebase.apiKey;
+    if (!fbKey) throw new Error("Firebase не подключён: запустите SETUP_FIREBASE.bat");
+  }
+  return fbKey;
+}
+
+function keepTokens(id, refresh, seconds) {
+  token = id; refreshToken = refresh; tokenExp = Date.now() + (seconds - 120) * 1000;
+  store.set("fitme_admin_token", token); store.set("fitme_admin_refresh", refreshToken); store.set("fitme_admin_exp", String(tokenExp));
+}
+
+async function freshToken() {
+  if (!token || !refreshToken || Date.now() < tokenExp) return;
+  const r = await fetch(`https://securetoken.googleapis.com/v1/token?key=${await firebaseKey()}`, {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({grant_type: "refresh_token", refresh_token: refreshToken})});
+  if (!r.ok) { token = null; return; }
+  const d = await r.json();
+  keepTokens(d.id_token, d.refresh_token, +d.expires_in);
+}
+
+async function api(path, opts = {}) {
+  if (!path.startsWith("/api/v1/auth/config")) await freshToken();
+  const headers = Object.assign({"Content-Type": "application/json"}, opts.headers || {});
+  if (token) headers.Authorization = "Bearer " + token;
+  const key = store.get("fitme_key");
+  if (key) headers["X-FitMe-Key"] = key;
+  const r = await fetch(path, Object.assign({}, opts, {headers}));
+  if (r.status === 401) {
+    const body = await r.json().catch(() => ({}));
+    if (/key/i.test(body.detail || "")) { $("#lkey").classList.remove("hidden"); }
+    if (path !== "/api/v1/auth/session") showLogin();
+    throw new Error(body.detail || "Нужен вход");
+  }
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    const d = body.detail;
+    throw new Error(typeof d === "string" ? d : (d && d.message) || ("Ошибка " + r.status));
+  }
+  return path.endsWith(".csv") ? r.blob() : r.json();
+}
+
+function showLogin() {
+  $("#app").classList.add("hidden");
+  $("#login").classList.remove("hidden");
+}
+
+async function login() {
+  $("#lerr").textContent = "";
+  if ($("#lkey").value) store.set("fitme_key", $("#lkey").value.trim());
+  try {
+    const key = await firebaseKey();
+    const r = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${key}`, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({email: $("#lemail").value.trim(), password: $("#lpass").value, returnSecureToken: true})});
+    const d = await r.json();
+    if (!r.ok) {
+      const code = (d.error && d.error.message) || "";
+      $("#lerr").textContent = /INVALID|NOT_FOUND|PASSWORD/.test(code) ? "Неверная почта или пароль"
+        : /DISABLED/.test(code) ? "Аккаунт заблокирован" : /TOO_MANY/.test(code) ? "Слишком много попыток, попробуйте позже" : code;
+      return;
+    }
+    keepTokens(d.idToken, d.refreshToken, +d.expiresIn);
+    const s = await api("/api/v1/auth/session", {method: "POST"});
+    if (s.user.role === "user") { $("#lerr").textContent = "У этого аккаунта нет прав администратора"; return; }
+    start();
+  } catch (e) { $("#lerr").textContent = e.message; }
+}
+$("#lgo").onclick = login;
+$("#lpass").addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
+$("#logout").onclick = async () => {
+  token = null; refreshToken = null;
+  ["fitme_admin_token", "fitme_admin_refresh", "fitme_admin_exp"].forEach((k) => store.set(k, null));
+  showLogin();
+};
+$("#theme").onclick = () => {
+  const root = document.documentElement;
+  const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  root.dataset.theme = dark ? "light" : "dark";
+  store.set("fitme_theme", root.dataset.theme);
+  if (lastOverview) renderOverview(lastOverview);
+};
+if (store.get("fitme_theme")) document.documentElement.dataset.theme = store.get("fitme_theme");
+
+document.querySelectorAll("nav button").forEach((b) => b.onclick = () => openTab(b.dataset.tab));
+function openTab(name) {
+  document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
+  document.querySelectorAll("main > section").forEach((s) => s.classList.toggle("hidden", s.id !== "tab-" + name));
+  ({overview: loadOverview, users: loadUsers, jobs: loadJobs, settings: loadSettings})[name]();
+}
+
+async function start() {
+  try {
+    const r = await api("/api/v1/auth/me");
+    me = r.user;
+    if (me.role === "user") { showLogin(); $("#lerr").textContent = "Нет прав администратора"; return; }
+  } catch (e) { showLogin(); return; }
+  $("#who").innerHTML = esc(me.email) + ' <span class="role ' + me.role + '">' + roleName[me.role] + "</span>";
+  $("#login").classList.add("hidden");
+  $("#app").classList.remove("hidden");
+  openTab("overview");
+}
+
+// ------------------------------------------------------------------ charts (inline SVG)
+function tipFor(box) {
+  let tip = box.querySelector(".tip");
+  if (!tip) { tip = document.createElement("div"); tip.className = "tip"; box.appendChild(tip); }
+  return tip;
+}
+
+function barChart(box, values, labels, unit) {
+  const W = box.clientWidth || 560, H = 190, padL = 30, padB = 22, padT = 8;
+  const max = Math.max(1, ...values);
+  const step = (W - padL) / values.length, bw = Math.max(3, step - 2);
+  const y = (v) => H - padB - (H - padB - padT) * v / max;
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Примерки по часам">`;
+  for (const t of [0, .5, 1]) {
+    const v = Math.round(max * t);
+    s += `<line x1="${padL}" x2="${W}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/>`;
+    s += `<text x="${padL - 6}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${v}</text>`;
+  }
+  values.forEach((v, i) => {
+    const x = padL + i * step + 1, top = y(v), h = H - padB - top;
+    if (v > 0) {
+      const r = Math.min(4, bw / 2, h);
+      s += `<path d="M${x},${H - padB} V${top + r} q0,-${r} ${r},-${r} h${bw - 2 * r} q${r},0 ${r},${r} V${H - padB} Z" fill="var(--series-1)"/>`;
+    }
+    s += `<rect class="hit" data-i="${i}" x="${padL + i * step}" y="${padT}" width="${step}" height="${H - padB - padT}" fill="transparent"/>`;
+    if (i % 4 === 0) s += `<text x="${x + bw / 2}" y="${H - 6}" text-anchor="middle" font-size="11" fill="var(--muted)">${labels[i]}</text>`;
+  });
+  s += `<line x1="${padL}" x2="${W}" y1="${H - padB}" y2="${H - padB}" stroke="var(--line)"/></svg>`;
+  box.innerHTML = s;
+  const tip = tipFor(box);
+  box.querySelectorAll(".hit").forEach((r) => {
+    r.onmouseenter = () => { const i = +r.dataset.i; tip.innerHTML = `<b>${labels[i]}</b>: ${values[i]} ${unit}`; tip.style.display = "block";
+      tip.style.left = Math.min(W - 120, +r.getAttribute("x")) + "px"; tip.style.top = "0px"; };
+    r.onmouseleave = () => tip.style.display = "none";
+  });
+}
+
+function lineChart(box, series, times) {
+  // series: [{name, color, values}] - all in percent, one axis 0..100
+  const W = box.clientWidth || 560, H = 190, padL = 34, padB = 22, padT = 8;
+  const n = times.length;
+  if (n < 2) { box.innerHTML = '<p class="muted">Данные появятся через минуту после запуска сервера.</p>'; return; }
+  const x = (i) => padL + (W - padL - 4) * i / (n - 1);
+  const y = (v) => H - padB - (H - padB - padT) * Math.max(0, Math.min(100, v)) / 100;
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Нагрузка процессора и видеокарты">`;
+  for (const v of [0, 50, 100]) {
+    s += `<line x1="${padL}" x2="${W}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/>`;
+    s += `<text x="${padL - 6}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${v}%</text>`;
+  }
+  const tl = (i) => new Date(times[i] * 1000).toLocaleTimeString("ru-RU", {hour: "2-digit", minute: "2-digit"});
+  for (const i of [0, Math.floor(n / 2), n - 1]) s += `<text x="${x(i)}" y="${H - 6}" text-anchor="${i === 0 ? "start" : i === n - 1 ? "end" : "middle"}" font-size="11" fill="var(--muted)">${tl(i)}</text>`;
+  for (const ser of series) {
+    let d = "", pen = false;
+    ser.values.forEach((v, i) => { if (v == null) { pen = false; return; } d += (pen ? "L" : "M") + x(i).toFixed(1) + "," + y(v).toFixed(1); pen = true; });
+    s += `<path d="${d}" fill="none" stroke="${ser.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  }
+  s += `<line class="cross" x1="0" x2="0" y1="${padT}" y2="${H - padB}" stroke="var(--muted)" stroke-dasharray="3 3" visibility="hidden"/>`;
+  s += `<rect class="hit" x="${padL}" y="0" width="${W - padL}" height="${H}" fill="transparent"/></svg>`;
+  box.innerHTML = s + '<div class="legend">' + series.map((r) => `<span><i style="background:${r.color}"></i>${r.name}</span>`).join("") + "</div>";
+  const tip = tipFor(box), svg = box.querySelector("svg"), cross = box.querySelector(".cross");
+  box.querySelector(".hit").onmousemove = (e) => {
+    const rect = svg.getBoundingClientRect();
+    const px = (e.clientX - rect.left) * W / rect.width;
+    const i = Math.max(0, Math.min(n - 1, Math.round((px - padL) / (W - padL - 4) * (n - 1))));
+    cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("visibility", "visible");
+    tip.innerHTML = `<b>${tl(i)}</b><br>` + series.map((r) => `<i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${r.color};margin-right:6px"></i>${r.name}: ${r.values[i] == null ? "—" : num(r.values[i]) + "%"}`).join("<br>");
+    tip.style.display = "block"; tip.style.left = Math.min(W - 150, x(i) * rect.width / W + 10) + "px"; tip.style.top = "0px";
+  };
+  box.querySelector(".hit").onmouseleave = () => { tip.style.display = "none"; cross.setAttribute("visibility", "hidden"); };
+}
+
+// ------------------------------------------------------------------ overview
+let lastOverview = null;
+async function loadOverview() {
+  const el = $("#tab-overview");
+  if (!lastOverview) el.innerHTML = '<p class="muted">Загрузка…</p>';
+  try { lastOverview = await api("/api/v1/admin/overview"); renderOverview(lastOverview); }
+  catch (e) { el.innerHTML = `<p class="danger">${esc(e.message)}</p>`; }
+}
+
+function tile(label, value, sub, cls = "") {
+  return `<div class="card tile"><div class="label">${label}</div><div class="value ${cls}">${value}</div><div class="sub">${sub || "&nbsp;"}</div></div>`;
+}
+
+function renderOverview(o) {
+  const s = o.system || {}, u = o.users, t = o.tryons, c = o.capacity, st = o.storage_mb, tr = o.traffic_24h;
+  const gpuTxt = s.gpu_util_pct == null ? "—" : num(s.gpu_util_pct) + "%";
+  const vram = s.vram_used_mb == null ? "" : `видеопамять ${num(s.vram_used_mb / 1024, 1)} / ${num(s.vram_total_mb / 1024, 1)} ГБ`;
+  const hours = [...Array(24)].map((_, i) => new Date((o.now - 86400 + i * 3600) * 1000).toLocaleTimeString("ru-RU", {hour: "2-digit"}) + ":00");
+  let html = `<h2 style="margin-top:0">Сейчас</h2><div class="grid">
+    ${tile("Онлайн (5 мин)", num(u.online_5m), `пик за неделю: ${num(u.peak_online_7d)}`)}
+    ${tile("Очередь примерок", num(s.queued_jobs), `в работе: ${num(s.active_jobs)}`, s.queued_jobs > 2 ? "warn" : "")}
+    ${tile("Видеокарта", gpuTxt, s.gpu_util_pct == null ? "nvidia-smi не отвечает" : [o.gpu_name, vram, s.gpu_temp_c != null ? num(s.gpu_temp_c) + " °C" : ""].filter(Boolean).join(" • "))}
+    ${tile("Процессор", s.cpu_pct == null ? "—" : num(s.cpu_pct) + "%", `сервер занимает ${num(s.proc_rss_mb)} МБ ОЗУ`)}
+    ${tile("Память ноутбука", s.ram_used_mb == null ? "—" : num(s.ram_used_mb / 1024, 1) + " ГБ", `из ${num((s.ram_total_mb || 0) / 1024, 1)} ГБ`)}
+    ${tile("Свободно на диске", s.disk_free_gb == null ? "—" : num(s.disk_free_gb) + " ГБ", `данные FitMe: ${num(st.total)} МБ`)}
+  </div>
+  <h2>Пользователи и примерки</h2><div class="grid">
+    ${tile("Аккаунтов", num(u.total), `подтверждено ${num(u.verified)} • админов ${num(u.admins)}`)}
+    ${tile("Новых за сутки", num(u.new_24h), `за неделю: ${num(u.new_7d)}`)}
+    ${tile("Активны за сутки", num(u.active_24h), `заблокировано: ${num(u.blocked)}`)}
+    ${tile("Примерок за сутки", num(t.day), `успешно ${num(t.day_ok)} • ошибок ${num(t.day_failed)}`, t.day_failed ? "" : "")}
+    ${tile("GPU за сутки", num(t.day_gpu_minutes, 1) + " мин", `среднее ожидание в очереди ${num(t.day_avg_wait_s)} с`)}
+    ${tile("Трафик за сутки", num(tr.out_mb + tr.in_mb, 1) + " МБ", `${num(tr.requests)} запросов • ответ ${num(tr.avg_ms)} мс`)}
+  </div>
+  <div class="two" style="margin-top:14px">
+    <div class="card"><h3>Примерки по часам (последние 24 ч)</h3><div class="chart" id="ch-hours"></div></div>
+    <div class="card"><h3>Нагрузка за 6 часов</h3><div class="chart" id="ch-load"></div></div>
+  </div>
+  <h2>Сколько людей выдержит сервер</h2>
+  <div class="two">
+    <div class="card">
+      <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+        <div class="tile"><div class="label">Одна примерка</div><div class="value">${num(c.avg_job_s)} с</div><div class="sub">${c.measured_jobs ? "среднее по " + c.measured_jobs + " примеркам" : "оценка, данных пока нет"}</div></div>
+        <div class="tile"><div class="label">В час максимум</div><div class="value">${num(c.per_hour)}</div><div class="sub">${num(c.per_day)} в сутки</div></div>
+        <div class="tile"><div class="label">Одновременно*</div><div class="value">${num(c.users_wait_60s)}</div><div class="sub">чел. при ожидании ≤ 1 мин</div></div>
+      </div>
+      <p class="note">* Видеокарта делает одну картинку за раз, остальные ждут в очереди. Считаем, что активный человек
+      запускает примерку раз в ${num(c.think_s / 60, 1)} мин (${c.measured_gaps >= 5 ? "измерено по " + c.measured_gaps + " интервалам" : "допущение, пока мало данных"}).
+      При ожидании до 30 с — ${num(c.users_wait_30s)} чел., до 2 мин — ${num(c.users_wait_120s)} чел. Процессор, память и диск не ограничивают: всё упирается в видеокарту.</p>
+    </div>
+    <div class="card scroll"><table class="cap">
+      <tr><th class="num">Активных людей</th><th class="num">Загрузка GPU</th><th class="num">Ожидание в очереди</th></tr>
+      ${c.table.map((r) => `<tr><td class="num">${r.users}</td><td class="num">${r.load_pct}%</td>
+        <td class="num ${r.overloaded ? "over" : ""}">${r.overloaded ? "перегрузка — очередь растёт" : (r.wait_s < 1 ? "без ожидания" : "≈ " + num(r.wait_s) + " с")}</td></tr>`).join("")}
+    </table></div>
+  </div>
+  <h2>Хранилище</h2><div class="grid">
+    ${tile("Фото людей и вещей", num(st.uploads, 1) + " МБ", "загрузки для примерок")}
+    ${tile("Результаты", num(st.generated, 1) + " МБ", "готовые картинки")}
+    ${tile("Каталоги", num(st.catalog, 1) + " МБ", "вещи пользователей")}
+    ${tile("База данных", num(st.database, 1) + " МБ", `≈ ${num(o.storage_per_user_mb, 1)} МБ на пользователя`)}
+  </div>
+  <p class="note">Обновлено ${new Date(o.now * 1000).toLocaleTimeString("ru-RU")} • страница обновляется сама каждые 30 с.</p>`;
+  $("#tab-overview").innerHTML = html;
+  barChart($("#ch-hours"), t.per_hour_24h, hours, "примерок");
+  const ser = o.series || [];
+  lineChart($("#ch-load"), [
+    {name: "Процессор", color: "var(--series-1)", values: ser.map((r) => r.cpu_pct)},
+    {name: "Видеокарта", color: "var(--series-2)", values: ser.map((r) => r.gpu_util_pct)},
+  ], ser.map((r) => r.ts));
+}
+setInterval(() => { if (!$("#tab-overview").classList.contains("hidden") && token && me) loadOverview(); }, 30000);
+
+// ------------------------------------------------------------------ users
+let users = [], sortKey = "created_at", sortDir = -1;
+const userCols = [
+  ["email", "Почта"], ["name", "Имя"], ["role", "Роль"], ["status", "Статус"], ["created_at", "Регистрация"],
+  ["last_seen_at", "Был в сети"], ["tryons", "Примерок", 1], ["tryons_24h", "За сутки", 1], ["gpu_minutes", "GPU, мин", 1],
+  ["recolors", "Перекрасок", 1], ["looks", "Луков", 1], ["catalog_items", "Вещей", 1], ["storage_mb", "Хранилище, МБ", 1],
+  ["requests", "Запросов", 1], ["traffic_mb", "Трафик, МБ", 1], ["last_ip", "IP"], ["actions", ""],
+];
+async function loadUsers() {
+  const el = $("#tab-users");
+  el.innerHTML = `<div class="toolbar"><input id="uq" placeholder="Поиск по почте или имени" style="min-width:260px">
+    <span class="muted" id="ucount"></span><div class="spacer"></div>
+    <button class="btn" id="ucsv">Скачать CSV</button></div><div class="card scroll" style="padding:4px"><table id="utable"></table></div>
+    <p class="note">Пароли хранит Google Firebase — FitMe и администраторы их не видят.</p>`;
+  $("#uq").oninput = renderUsers;
+  $("#ucsv").onclick = async () => {
+    const blob = await api("/api/v1/admin/users.csv");
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "fitme_users.csv"; a.click();
+  };
+  try { users = (await api("/api/v1/admin/users")).items; renderUsers(); }
+  catch (e) { el.innerHTML = `<p class="danger">${esc(e.message)}</p>`; }
+}
+function renderUsers() {
+  const q = ($("#uq").value || "").toLowerCase();
+  const list = users.filter((u) => !q || u.email.toLowerCase().includes(q) || (u.name || "").toLowerCase().includes(q))
+    .sort((a, b) => { const x = a[sortKey], y = b[sortKey]; return (x > y ? 1 : x < y ? -1 : 0) * sortDir; });
+  $("#ucount").textContent = `${list.length} из ${users.length}`;
+  let h = "<tr>" + userCols.map(([k, n, isNum]) => `<th data-k="${k}" class="${isNum ? "num" : ""}">${n}${sortKey === k ? (sortDir > 0 ? " ↑" : " ↓") : ""}</th>`).join("") + "</tr>";
+  for (const u of list) {
+    const status = u.blocked ? '<span class="pill danger">заблокирован</span>' : u.verified ? '<span class="pill ok">активен</span>' : '<span class="pill warn">не подтвердил почту</span>';
+    let actions = "";
+    if (u.role !== "owner" && u.id !== me.id) {
+      if (me.role === "owner" || u.role === "user") actions += `<button class="btn small" data-act="block" data-id="${u.id}" data-v="${u.blocked ? 0 : 1}">${u.blocked ? "Разблокировать" : "Заблокировать"}</button> `;
+      if (me.role === "owner") {
+        actions += `<button class="btn small" data-act="role" data-id="${u.id}" data-v="${u.role === "admin" ? "user" : "admin"}">${u.role === "admin" ? "Сделать клиентом" : "Сделать админом"}</button> `;
+        actions += `<button class="btn small danger" data-act="delete" data-id="${u.id}" data-email="${esc(u.email)}">Удалить</button>`;
+      }
+    }
+    h += `<tr><td>${esc(u.email)}</td><td>${esc(u.name)}</td><td><span class="role ${u.role}">${roleName[u.role]}</span></td><td>${status}</td>
+      <td>${fmtTime(u.created_at)}</td><td title="${fmtTime(u.last_seen_at)}">${ago(u.last_seen_at)}</td>
+      <td class="num">${num(u.tryons)}</td><td class="num">${num(u.tryons_24h)}</td><td class="num">${num(u.gpu_minutes, 1)}</td>
+      <td class="num">${num(u.recolors)}</td><td class="num">${num(u.looks)}</td><td class="num">${num(u.catalog_items)}</td>
+      <td class="num">${num(u.storage_mb, 1)}</td><td class="num">${num(u.requests)}</td><td class="num">${num(u.traffic_mb, 1)}</td>
+      <td class="muted">${esc(u.last_ip)}</td><td>${actions}</td></tr>`;
+  }
+  $("#utable").innerHTML = h;
+  $("#utable").querySelectorAll("th[data-k]").forEach((th) => th.onclick = () => {
+    const k = th.dataset.k; if (k === "actions") return;
+    sortDir = sortKey === k ? -sortDir : -1; sortKey = k; renderUsers();
+  });
+  $("#utable").querySelectorAll("button[data-act]").forEach((b) => b.onclick = async () => {
+    const id = b.dataset.id;
+    try {
+      if (b.dataset.act === "block") await api(`/api/v1/admin/users/${id}/block`, {method: "POST", body: JSON.stringify({blocked: b.dataset.v === "1"})});
+      if (b.dataset.act === "role") await api(`/api/v1/admin/users/${id}/role`, {method: "POST", body: JSON.stringify({role: b.dataset.v})});
+      if (b.dataset.act === "delete") {
+        if (!confirm(`Удалить ${b.dataset.email} вместе с его фото, примерками и луками? Это нельзя отменить.`)) return;
+        await api(`/api/v1/admin/users/${id}`, {method: "DELETE"});
+      }
+      users = (await api("/api/v1/admin/users")).items; renderUsers();
+    } catch (e) { alert(e.message); }
+  });
+}
+
+// ------------------------------------------------------------------ jobs
+async function loadJobs() {
+  const el = $("#tab-jobs");
+  try {
+    const items = (await api("/api/v1/admin/jobs?limit=200")).items;
+    const statusPill = (s) => s === "completed" ? '<span class="pill ok">готово</span>' : s === "failed" ? '<span class="pill danger">ошибка</span>' : `<span class="pill warn">${esc(s)}</span>`;
+    el.innerHTML = `<div class="card scroll" style="padding:4px"><table><tr><th>Время</th><th>Пользователь</th><th>Модель</th><th class="num">Вещей</th>
+      <th class="num">Шагов</th><th class="num">Ожидание, с</th><th class="num">GPU, с</th><th class="num">Перекрасок</th><th>Статус</th><th>Ошибка</th></tr>
+      ${items.map((j) => `<tr><td>${fmtTime(j.created_at)}</td><td>${esc(j.email || "—")}</td><td>${esc(j.model)}</td><td class="num">${j.items}</td>
+        <td class="num">${j.steps}</td><td class="num">${j.started_at ? num(j.started_at - j.created_at, 1) : "—"}</td><td class="num">${num(j.gpu_seconds, 1)}</td>
+        <td class="num">${num(j.recolors)}</td><td>${statusPill(j.status)}</td><td class="muted" title="${esc(j.error)}">${esc((j.error || "").slice(0, 70))}</td></tr>`).join("")}
+      </table></div>`;
+    if (!items.length) el.innerHTML = '<p class="muted">Примерок ещё не было.</p>';
+  } catch (e) { el.innerHTML = `<p class="danger">${esc(e.message)}</p>`; }
+}
+
+// ------------------------------------------------------------------ settings
+async function loadSettings() {
+  const el = $("#tab-settings");
+  try {
+    const s = await api("/api/v1/admin/settings");
+    const owner = me.role === "owner";
+    let html = `<div class="two"><div class="card"><h3>Правила</h3>
+      <p><label><input type="checkbox" id="sreg" ${s.settings.registration_open ? "checked" : ""} ${owner ? "" : "disabled"}> Регистрация новых пользователей открыта</label></p>
+      <p>Лимит примерок для клиента в сутки: <input id="slimit" type="number" min="0" max="1000" style="width:90px" value="${s.settings.daily_tryon_limit}" ${owner ? "" : "disabled"}>
+      <span class="muted">0 = без лимита. Админов и создателя не касается.</span></p>
+      ${owner ? '<button class="btn primary" id="ssave">Сохранить</button> <span id="smsg" class="muted"></span>' : '<p class="muted">Менять правила может только создатель.</p>'}
+      </div><div class="card"><h3>Firebase</h3>
+      <p>${s.firebase.configured ? `<span class="pill ok">подключён</span> Проект <code>${esc(s.firebase.project_id)}</code>. Аккаунты, письма подтверждения и сброса пароля — через Firebase.`
+        : '<span class="pill warn">не подключён</span> Запустите <code>SETUP_FIREBASE.bat</code> на ноутбуке.'}</p>
+      <p class="muted">Данные пользователей можно смотреть и править в <b>Firebase Console</b> → Firestore Database: коллекции <code>users</code>, <code>tryons</code>, <code>config</code>.
+      Список аккаунтов и блокировка входа — в разделе Authentication.</p></div></div>`;
+    el.innerHTML = html;
+    if (owner) {
+      $("#ssave").onclick = async () => {
+        try {
+          await api("/api/v1/admin/settings", {method: "POST", body: JSON.stringify({registration_open: $("#sreg").checked, daily_tryon_limit: +$("#slimit").value})});
+          $("#smsg").textContent = "Сохранено";
+        } catch (e) { $("#smsg").textContent = e.message; }
+      };
+
+    }
+  } catch (e) { el.innerHTML = `<p class="danger">${esc(e.message)}</p>`; }
+}
+
+if (token) start(); else showLogin();
+fetch("/health").then((r) => r.json()).then((h) => { if (h.api_key_required && !store.get("fitme_key")) $("#lkey").classList.remove("hidden"); }).catch(() => {});
+</script>
+</body>
+</html>

@@ -1,0 +1,61 @@
+UI check 02.11.2026 18:14:11,59 
+===== flutter analyze ===== 
+
+┌─────────────────────────────────────────────────────────┐
+│ A new version of Flutter is available!                  │
+│                                                         │
+│ To update to the latest version, run "flutter upgrade". │
+└─────────────────────────────────────────────────────────┘
+Analyzing fitme-ai...                                           
+No issues found! (ran in 2.4s)
+===== flutter test ===== 
+00:00 +0: loading D:/fitme-ai/test/widget_test.dart
+00:00 +0: categoryRu maps backend categories to Russian labels
+00:00 +1: garmentTypeFor detects garment type from product title
+00:00 +2: garmentTypeFor falls back to category default
+00:00 +3: every garment type choice has a valid AI category
+00:00 +4: ServerConfig normalizes typed addresses
+00:00 +5: ServerConfig labels the route
+00:00 +6: ServerConfig builds absolute urls
+00:00 +7: outfit item photo type
+00:00 +8: try-on model parsing and category support
+00:00 +9: quality presets go up to 50 steps
+00:00 +10: cleanProductName drops shop noise from page titles
+00:00 +11: translations Russian is the default and fills placeholders
+00:00 +12: translations every translation keeps the placeholders of its key
+00:00 +13: accounts password rules match the server
+00:00 +14: accounts user json, roles and display name
+00:00 +15: recolour palette hex colours go both ways
+00:00 +16: recolour palette every palette colour has a translation
+00:00 +17: All tests passed!
+===== ui tour ===== 
+00:00 +0: loading D:/fitme-ai/test_tour/ui_tour_test.dart
+00:00 +0: (setUpAll)
+00:00 +0: login dark
+00:04 +1: register light
+00:07 +2: home dark
+00:11 +3: home light
+00:15 +4: tryon dark
+00:19 +5: catalog light
+00:22 +6: profile dark
+00:26 +7: profile light en
+00:29 +8: home dark kk
+00:33 +9: admin overview dark
+00:35 +10: admin users dark
+00:38 +11: admin settings light
+00:42 +12: result with colour palette
+00:46 +13: (tearDownAll)
+00:46 +13: All tests passed!
+===== backend tests ===== 
+
+[notice] A new release of pip is available: 26.2.1 -> 26.2.2
+[notice] To update, run: D:\fitme-ai\backend\.venv\Scripts\python.exe -m pip install --upgrade pip
+.....................                                                    [100%]
+============================== warnings summary ===============================
+backend/tests/test_backend.py::test_health_is_open_but_api_needs_key_and_account
+  D:\fitme-ai\backend\.venv\Lib\site-packages\starlette\testclient.py:51: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+21 passed, 1 warning in 12.16s
+===== DONE ===== 

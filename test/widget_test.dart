@@ -1,7 +1,11 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fitme_ai/api.dart';
+import 'package:fitme_ai/auth_screen.dart';
 import 'package:fitme_ai/common.dart';
+import 'package:fitme_ai/i18n.dart';
+import 'package:fitme_ai/strings.dart';
 import 'package:fitme_ai/tryon_screen.dart';
 
 void main() {
@@ -49,6 +53,7 @@ void main() {
       expect(ServerConfig.routeLabel('http://192.168.0.10:8000'), 'Wi-Fi');
       expect(ServerConfig.routeLabel('http://172.20.1.1:8000'), 'Wi-Fi');
       expect(ServerConfig.routeLabel('https://x.trycloudflare.com'), 'Интернет');
+      expect(ServerConfig.routeLabel('https://ab-1-2.a.free.pinggy.link'), 'Интернет');
     });
 
     test('builds absolute urls', () {
@@ -95,6 +100,59 @@ void main() {
   });
 
   test('quality presets go up to 50 steps', () {
-    expect(kQualityPresets.map((p) => p.$1), [15, 30, 50]);
+    expect(kQualityPresets.map((p) => p.$1), [20, 30, 50]);
+  });
+
+  group('cleanProductName', () {
+    test('drops shop noise from page titles', () {
+      expect(
+        cleanProductName('Купить Анорак NAPAPIJRI голубой в Астане – Магазин на Kaspi.kz'),
+        'Анорак NAPAPIJRI голубой',
+      );
+      expect(cleanProductName('Рубашка в клетку – Магазин на Kaspi.kz'), 'Рубашка в клетку');
+      expect(cleanProductName('Nike Air Max | Wildberries'), 'Nike Air Max');
+      expect(cleanProductName('Синие джинсы'), 'Синие джинсы');
+      expect(cleanProductName('Купить'), 'Купить');
+    });
+  });
+
+  group('translations', () {
+    test('Russian is the default and fills placeholders', () {
+      expect(t('Шаг {n} из {all}: {what}', {'n': 1, 'all': 3, 'what': 'Футболка'}), 'Шаг 1 из 3: Футболка');
+    });
+
+    test('every translation keeps the placeholders of its key', () {
+      final ph = RegExp(r'\{\w+\}');
+      List<String> names(String s) => ph.allMatches(s).map((m) => m[0]!).toList()..sort();
+      for (final map in [stringsEn, stringsKk]) {
+        expect(map.length, stringsEn.length);
+        map.forEach((key, value) => expect(names(value), names(key), reason: key));
+      }
+    });
+  });
+
+  group('accounts', () {
+    test('password rules match the server', () {
+      expect(passwordProblem('short1'), isNotNull);
+      expect(passwordProblem('onlyletters'), isNotNull);
+      expect(passwordProblem('12345678'), isNotNull);
+      expect(passwordProblem('secret123'), isNull);
+      expect(passwordProblem('пароль2026'), isNull);
+    });
+
+    test('user json, roles and display name', () {
+      final u = AccountUser.fromJson({'id': 3, 'email': 'aigerim@mail.ru', 'name': '', 'role': 'admin'});
+      expect(u.isAdmin, isTrue);
+      expect(u.isOwner, isFalse);
+      expect(u.displayName, 'aigerim');
+      expect(AccountUser.fromJson(u.toJson()).email, 'aigerim@mail.ru');
+      expect(roleLabel('owner'), 'Создатель');
+      expect(roleLabel('user'), 'Клиент');
+    });
+  });
+
+  test('hex colours', () {
+    expect(hexColor('#2f5bb5'), const Color(0xFF2F5BB5));
+    expect(hexColor('nonsense'), const Color(0xFF888888));
   });
 }

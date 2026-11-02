@@ -1,0 +1,13 @@
+FitMe build APK only 02.11.2026 20:13:33,19 
+discovery topic: fitme-c4794d2b0079571520183833 
+===== JDK ===== 
+Setting "jdk-dir" value to "D:\fitme-ai\tools\jdk-21.0.12.1+1".
+
+You may need to restart any open editors for them to read new settings.
+===== flutter build apk ===== 
+Running Gradle task 'assembleRelease'...                        
+Font asset "MaterialIcons-Regular.otf" was tree-shaken, reducing it from 1645184 to 10288 bytes (99.4% reduction). Tree-shaking can be disabled by providing the --no-tree-shake-icons flag when building your app.
+Running Gradle task 'assembleRelease'...                          164,2s
+тИЪ Built build\app\outputs\flutter-apk\app-release.apk (51.9MB)
+Скопировано файлов:         1.
+===== APK READY: FitMe.apk ===== 

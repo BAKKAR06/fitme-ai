@@ -47,6 +47,8 @@ if errorlevel 1 (
 echo GPU server ready >> "%LOG%"
 
 echo [2/3] Backend...
+rem new libraries of v4 (database stats, re-colouring); quick when already installed
+backend\.venv\Scripts\python.exe -m pip install -q -r backend\requirements.txt >> "%LOG%" 2>&1
 set "FITME_REMOTE_AI_URL=http://127.0.0.1:7860"
 set "FITME_AI_PROVIDER=kaggle"
 set "FITME_FASHN_STEPS=20"
